@@ -114,9 +114,12 @@ export async function hmac(keyBuf, data) {
 
 /**
  * AES-256-GCM encryption
+ * @param {ArrayBuffer} keyBuf — 256-bit raw key
+ * @param {string} plaintext — plaintext to encrypt
+ * @param {Uint8Array|null} additionalData — optional associated data for AEAD (default: empty)
  * Returns: { iv: base64, ciphertext: base64 }
  */
-export async function encrypt(keyBuf, plaintext) {
+export async function encrypt(keyBuf, plaintext, additionalData = null) {
   const key = await crypto.subtle.importKey(
     'raw',
     keyBuf,
@@ -126,7 +129,7 @@ export async function encrypt(keyBuf, plaintext) {
   );
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const ct = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv, tagLength: 128 },
+    { name: 'AES-GCM', iv, tagLength: 128, additionalData: additionalData ?? new Uint8Array(0) },
     key,
     new TextEncoder().encode(plaintext)
   );
@@ -135,8 +138,14 @@ export async function encrypt(keyBuf, plaintext) {
 
 /**
  * AES-256-GCM decryption
+ * @param {ArrayBuffer} keyBuf — 256-bit raw key
+ * @param {string} ivB64 — base64-encoded IV
+ * @param {string} ctB64 — base64-encoded ciphertext+tag
+ * @param {Uint8Array|null} additionalData — optional associated data for AEAD (default: empty)
+ * Returns: string (decoded plaintext)
+ * Throws: if authentication tag fails — do NOT catch silently
  */
-export async function decrypt(keyBuf, ivB64, ctB64) {
+export async function decrypt(keyBuf, ivB64, ctB64, additionalData = null) {
   const key = await crypto.subtle.importKey(
     'raw',
     keyBuf,
@@ -145,7 +154,7 @@ export async function decrypt(keyBuf, ivB64, ctB64) {
     ['decrypt']
   );
   const pt = await crypto.subtle.decrypt(
-    { name: 'AES-GCM', iv: fromB64(ivB64), tagLength: 128 },
+    { name: 'AES-GCM', iv: fromB64(ivB64), tagLength: 128, additionalData: additionalData ?? new Uint8Array(0) },
     key,
     fromB64(ctB64)
   );

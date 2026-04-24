@@ -9,14 +9,13 @@ import BadgeE2E from '@/components/BadgeE2E';
 import RedProgressBar from '@/components/RedProgressBar';
 import MediaTray from '@/components/MediaTray';
 import VoiceRecorder from '@/components/VoiceRecorder';
-import { DEMO_CONTACTS } from '@/data/demoData';
 import { encryptMessage, decryptPayload } from '@/crypto/sessionManager';
 
 // ============================================
 // Conversation Row
 // ============================================
-function ConversationRow({ conv, onClick, isLast }) {
-  const contact = DEMO_CONTACTS.find((c) => c.id === conv.contactId);
+function ConversationRow({ conv, onClick, isLast, contacts }) {
+  const contact = contacts.find((c) => c.id === conv.contactId);
   if (!contact) return null;
 
   const hasUnread = conv.unreadCount > 0;
@@ -467,7 +466,7 @@ function ChatDetail({ conv, onBack }) {
 // Main Chats Screen
 // ============================================
 export default function ChatsScreen() {
-  const { conversations, activeChatId, setActiveChat, closeChat, toggleUser, currentUser } = useApp();
+  const { conversations, activeChatId, setActiveChat, closeChat, toggleUser, currentUser, contacts } = useApp();
   const [showNewMessage, setShowNewMessage] = useState(false);
 
   const activeConv = conversations.find((c) => c.id === activeChatId);
@@ -562,6 +561,7 @@ export default function ChatsScreen() {
               <ConversationRow
                 key={conv.id}
                 conv={conv}
+                contacts={contacts}
                 isLast={index === conversations.length - 1}
                 onClick={() => setActiveChat(conv.id)}
               />

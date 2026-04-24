@@ -22,5 +22,10 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  define: {
+    // Build-time constant: true in development, false in production.
+    // Enables complete tree-shaking of demo data from production bundles.
+    __DEV_DEMO__: JSON.stringify(process.env.NODE_ENV !== 'production'),
+  },
 });
 

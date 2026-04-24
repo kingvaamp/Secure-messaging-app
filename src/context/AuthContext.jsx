@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { supabase, isDemoMode } from '@/lib/supabase';
 import { wipeAllKeys } from '@/crypto/keyStorage';
-import { clearAllSessions } from '@/crypto/sessionManager';
+import { clearAllSessions, publishMyPublicKey } from '@/crypto/sessionManager';
 
 const AuthContext = createContext(null);
 
@@ -24,6 +24,12 @@ export function AuthProvider({ children }) {
       setSession(session);
       setUser(session?.user ?? null);
       setLoading(false);
+      // Publish ECDH public key whenever a real (non-demo) session is established
+      if (session?.user?.id && !isDemoMode()) {
+        publishMyPublicKey(session.user.id).catch(() => {
+          // Non-fatal — key will be re-published on next login
+        });
+      }
     });
 
     return () => subscription.unsubscribe();
@@ -106,9 +112,8 @@ export function AuthProvider({ children }) {
   const signOut = useCallback(async () => {
     // Security: wipe all cryptographic key material BEFORE clearing user state
     try {
-      await wipeAllKeys();            // Clear localStorage identity + ratchet keys
-      clearAllSessions();             // Clear in-memory session keys
-      sessionStorage.removeItem('vanish_wrap_key_v2'); // Clear wrapping key
+      await wipeAllKeys();        // Wipes localStorage records + deletes IndexedDB MWK
+      clearAllSessions();         // Clear in-memory session keys
     } catch (e) {
       // Always proceed with sign-out even if key wipe fails
     }

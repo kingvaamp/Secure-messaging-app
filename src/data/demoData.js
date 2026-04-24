@@ -1,3 +1,4 @@
+/* @__PURE__ — this file is only referenced through __DEV_DEMO__ conditional imports */
 // ============================================
 // Demo Data — Senegalese Contacts & Conversations
 // French interface, +221 phone numbers

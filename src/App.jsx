@@ -1,5 +1,6 @@
 import { AuthProvider, useAuth } from '@/context/AuthContext';
 import { AppProvider, useApp } from '@/context/AppContext';
+import { DemoBanner } from '@/components/DemoBanner';
 import PlasmaBackground from '@/components/PlasmaBackground';
 import TabBar from '@/components/TabBar';
 import Notifs from '@/components/Notifs';
@@ -40,6 +41,7 @@ function AuthenticatedApp() {
 
   return (
     <SecurityGuard>
+      <DemoBanner />
       <PlasmaBackground opacity={1} />
 
       {/* Main content */}

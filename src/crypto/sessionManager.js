@@ -1,10 +1,22 @@
+/*
+ * REQUIRED DB MIGRATION (run in Supabase SQL editor):
+ * CREATE TABLE user_keys (
+ *   user_id UUID PRIMARY KEY REFERENCES auth.users(id),
+ *   public_key_b64 TEXT NOT NULL,
+ *   updated_at TIMESTAMPTZ DEFAULT NOW()
+ * );
+ * ALTER TABLE user_keys ENABLE ROW LEVEL SECURITY;
+ * CREATE POLICY "users can read all keys" ON user_keys FOR SELECT USING (true);
+ * CREATE POLICY "users can write own key" ON user_keys FOR ALL USING (auth.uid() = user_id);
+ */
+
 // ============================================
 // Session Manager — Real ECDH + Double Ratchet
 // Phase 3: Full Signal Protocol-grade session establishment
 //
 // Architecture:
-//   1. On first use, generate a real ECDH P-256 identity key pair for the user
-//   2. For each contact, generate an ephemeral key pair (session-scoped demo)
+//   1. On login, generate a real ECDH P-256 identity key pair and publish it to Supabase
+//   2. For each contact, fetch their published public key from Supabase (user_keys table)
 //   3. Run real ECDH(myPrivate, contactPublic) → 256-bit shared secret
 //   4. Feed shared secret into DoubleRatchet.init() → independent send/recv chains
 //   5. All messages use ratchet.encrypt() / ratchet.decrypt()
@@ -15,6 +27,7 @@
 
 import { DoubleRatchet } from './doubleRatchet';
 import { generateKeyPair, importPrivateKey, importPublicKey, ecdh } from './primitives';
+import { supabase } from '@/lib/supabase';
 
 // ── In-memory state (cleared on sign-out) ────────────────────────────────────
 // Never written to localStorage or sessionStorage — lives in JS heap only.
@@ -22,13 +35,10 @@ import { generateKeyPair, importPrivateKey, importPublicKey, ecdh } from './prim
 /** The current user's ECDH P-256 identity key pair for this session */
 let myKeyPair = null;
 
-/** Per-contact ephemeral key pairs: contactId → { publicKey, privateKey, publicB64 } */
-const contactKeyPairs = new Map();
-
 /** Per-conversation Double Ratchet instances: conversationId → DoubleRatchet */
 const ratchets = new Map();
 
-// ── Identity Key Management ────────────────────────────────────────────────
+// ── Identity Key Management ──────────────────────────────────────────────
 
 /**
  * Get (or lazily generate) the current user's ECDH identity key pair.
@@ -43,21 +53,41 @@ async function getMyKeyPair() {
   return myKeyPair;
 }
 
+// ── Key Server Integration (Supabase) ──────────────────────────────────
+
 /**
- * Get (or lazily generate) a per-contact ephemeral key pair.
- * Demo: each contact gets a fresh random key per session.
- * Production: fetch the contact's published public key from the key server.
+ * Fetch a contact's published ECDH P-256 public key from Supabase.
+ * Throws if the contact has not published a key — session cannot be established.
  *
- * @param {string} contactId
- * @returns {Promise<{ publicKey, privateKey, publicB64 }>}
+ * @param {string} contactId — Supabase user UUID
+ * @returns {Promise<string>} base64 raw ECDH P-256 public key
  */
-async function getOrCreateContactKeyPair(contactId) {
-  if (contactKeyPairs.has(contactId)) {
-    return contactKeyPairs.get(contactId);
+async function fetchContactPublicKey(contactId) {
+  const { data, error } = await supabase
+    .from('user_keys')
+    .select('public_key_b64')
+    .eq('user_id', contactId)
+    .single();
+
+  if (error || !data) {
+    throw new Error('Contact has no published key — cannot establish session');
   }
-  const kp = await generateKeyPair();
-  contactKeyPairs.set(contactId, kp);
-  return kp;
+  return data.public_key_b64;
+}
+
+/**
+ * Publish the current user's ECDH P-256 identity public key to Supabase.
+ * Must be called after login so contacts can fetch it to establish sessions.
+ *
+ * @param {string} userId — Supabase user UUID (from auth.user.id)
+ */
+export async function publishMyPublicKey(userId) {
+  const myKP = await getMyKeyPair();
+  await supabase.from('user_keys').upsert({
+    user_id: userId,
+    public_key_b64: myKP.publicB64,
+    updated_at: new Date().toISOString(),
+  });
 }
 
 // ── Ratchet Session Management ─────────────────────────────────────────────
@@ -84,14 +114,16 @@ async function getOrCreateRatchet(conversationId, contactId) {
   // Step 1: Get the user's real identity key pair
   const myKP = await getMyKeyPair();
 
-  // Step 2: Get (or generate demo) contact key pair
-  const contactKP = await getOrCreateContactKeyPair(contactId);
+  // Step 2: Fetch the contact's real published public key from Supabase key server
+  // Throws if the contact has not published a key — cannot establish E2E session
+  const contactPubB64 = await fetchContactPublicKey(contactId);
+  const contactPublicKey = await importPublicKey(contactPubB64);
 
   // Step 3: Real ECDH key agreement
   // ECDH(myPrivate, contactPublic) → 256-bit shared secret
   // This output is unique to this (user, contact) pair and requires
   // myPrivateKey to compute — never extractable from published data
-  const sharedBits = await ecdh(myKP.privateKey, contactKP.publicKey);
+  const sharedBits = await ecdh(myKP.privateKey, contactPublicKey);
 
   // Step 4: Initialize Double Ratchet with real shared secret
   // init() internally runs HKDF to split sharedBits into:
@@ -151,18 +183,14 @@ export async function getMyPublicB64() {
 }
 
 /**
- * Get a contact's ECDH public key (base64-encoded).
- * Used for safety number computation.
- *
- * Demo: returns the session-scoped ephemeral public key.
- * Production: this would be the contact's server-published identity key.
+ * Get a contact's ECDH public key (base64-encoded) from the Supabase key server.
+ * Used for safety number computation and identity verification.
  *
  * @param {string} contactId
  * @returns {Promise<string>} base64 public key
  */
 export async function getContactPublicB64(contactId) {
-  const kp = await getOrCreateContactKeyPair(contactId);
-  return kp.publicB64;
+  return fetchContactPublicKey(contactId);
 }
 
 /**
@@ -180,7 +208,6 @@ export function clearAllSessions() {
     myKeyPair.publicB64 = null;
     myKeyPair = null;
   }
-  contactKeyPairs.clear();
   ratchets.clear();
 }
 

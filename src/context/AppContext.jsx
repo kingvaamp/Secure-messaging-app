@@ -1,13 +1,6 @@
 import React, { createContext, useContext, useReducer, useCallback } from 'react';
-import {
-  DEMO_CONTACTS,
-  DEMO_CONVERSATIONS,
-  DEMO_CALLS,
-  DEMO_CURRENT_USER,
-  DEMO_CURRENT_USER_BOB,
-  DEFAULT_SECURITY_SETTINGS,
-  DEMO_STATS,
-} from '@/data/demoData';
+import { DEFAULT_SECURITY_SETTINGS } from '@/data/demoData';
+import { useDemoData } from '@/data/useDemoData';
 
 const AppContext = createContext(null);
 
@@ -108,9 +101,12 @@ function appReducer(state, action) {
       };
 
     case ACTIONS.TOGGLE_USER:
+      // demoUserBob is null in production (no demo data) — fall back to current user
       return {
         ...state,
-        currentUser: state.currentUser.id === 'demo-alice' ? DEMO_CURRENT_USER_BOB : DEMO_CURRENT_USER,
+        currentUser: state._demoUserBob
+          ? (state.currentUser.id === 'demo-alice' ? state._demoUserBob : state._demoUser)
+          : state.currentUser,
       };
 
     case ACTIONS.UPDATE_SECURITY:
@@ -162,27 +158,32 @@ function appReducer(state, action) {
 }
 
 // ============================================
-// Initial State
+// Initial State — built at runtime via useDemoData() gate
 // ============================================
-const initialState = {
-  activeTab: 'chats',
-  activeChatId: null,
-  activeCall: null,
-  notifications: [],
-  contacts: DEMO_CONTACTS,
-  conversations: DEMO_CONVERSATIONS,
-  calls: DEMO_CALLS,
-  currentUser: DEMO_CURRENT_USER,
-  securitySettings: DEFAULT_SECURITY_SETTINGS,
-  stats: DEMO_STATS,
-  contactsFilter: '',
-};
+function buildInitialState(demoData) {
+  return {
+    activeTab: 'chats',
+    activeChatId: null,
+    activeCall: null,
+    notifications: [],
+    contacts:         demoData.contacts,
+    conversations:    demoData.conversations,
+    calls:            demoData.calls,
+    currentUser:      demoData.currentUser,
+    _demoUser:        demoData.currentUser,      // kept for TOGGLE_USER
+    _demoUserBob:     demoData.currentUserBob,   // kept for TOGGLE_USER
+    securitySettings: demoData.securitySettings,
+    stats:            demoData.stats,
+    contactsFilter: '',
+  };
+}
 
 // ============================================
 // Provider
 // ============================================
 export function AppProvider({ children }) {
-  const [state, dispatch] = useReducer(appReducer, initialState);
+  const demoData = useDemoData();
+  const [state, dispatch] = useReducer(appReducer, undefined, () => buildInitialState(demoData));
 
   React.useEffect(() => {
     const interval = setInterval(() => {
