@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import {
   ChevronLeft, Phone, MoreVertical, Lock, Unlock,
-  Send, Plus, Mic, CheckCheck, AlertTriangle
+  Send, Plus, Mic, CheckCheck, AlertTriangle, X, FileText
 } from 'lucide-react';
 import { useApp } from '@/context/AppContext';
 import Av from '@/components/Av';
@@ -62,7 +62,7 @@ function ConversationRow({ conv, onClick, isLast, contacts }) {
 // ============================================
 // Message Bubble
 // ============================================
-function MessageBubble({ message, isSent, onDecrypt, ttl }) {
+function MessageBubble({ message, isSent, onDecrypt, ttl, isVanishing }) {
   const [glitching, setGlitching] = useState(false);
 
   const handleTap = () => {
@@ -80,7 +80,19 @@ function MessageBubble({ message, isSent, onDecrypt, ttl }) {
     : { backgroundColor: '#222', borderRadius: '18px 18px 18px 4px' };
 
   return (
-    <div className={`flex ${isSent ? 'justify-end' : 'justify-start'} mb-2 px-4`}>
+    <div 
+      className={`flex ${isSent ? 'justify-end' : 'justify-start'} overflow-hidden transition-all ease-[cubic-bezier(0.4,0,0.2,1)]`}
+      style={{
+        transitionDuration: '600ms',
+        opacity: isVanishing ? 0 : 1,
+        transform: isVanishing ? 'scale(0.85) translateY(15px)' : 'scale(1) translateY(0)',
+        filter: isVanishing ? 'blur(10px)' : 'none',
+        maxHeight: isVanishing ? 0 : 600, // collapse height smoothly
+        marginBottom: isVanishing ? 0 : 8,
+        paddingLeft: 16,
+        paddingRight: 16,
+      }}
+    >
       <div
         className="max-w-[75%] px-3.5 py-2.5 cursor-pointer transition-all active:scale-[0.98]"
         style={{
@@ -100,7 +112,23 @@ function MessageBubble({ message, isSent, onDecrypt, ttl }) {
           </div>
         ) : (
           <>
-            <p className="text-[14px] text-white/90 leading-relaxed">{message.text}</p>
+            {message.attachment && (
+              <div className="mb-2 rounded-lg overflow-hidden border border-white/5">
+                {message.attachment.type.startsWith('image/') ? (
+                  <img src={message.attachment.url} alt="attachment" className="w-full max-h-[200px] object-cover" />
+                ) : message.attachment.type.startsWith('video/') ? (
+                  <video src={message.attachment.url} controls className="w-full max-h-[200px] bg-black" />
+                ) : (
+                  <div className="flex items-center gap-2 p-3 bg-white/5">
+                    <FileText size={18} className="text-[#ff003c]" />
+                    <span className="text-[13px] text-white/90 truncate">{message.attachment.name}</span>
+                  </div>
+                )}
+              </div>
+            )}
+            {message.text && (
+              <p className="text-[14px] text-white/90 leading-relaxed">{message.text}</p>
+            )}
             <div className="flex items-center justify-end gap-1.5 mt-1">
               <span className="text-[10px]" style={{ color: 'rgba(255,255,255,0.4)' }}>
                 {message.time}
@@ -110,9 +138,17 @@ function MessageBubble({ message, isSent, onDecrypt, ttl }) {
               )}
             </div>
             {message.isRead && message.ttl > 0 && (
-              <div className="mt-1.5">
-                <RedProgressBar ttl={ttl} max={180} />
-                <span className="text-[10px] font-mono mt-0.5 block" style={{ color: '#ff003c' }}>
+              <div className="mt-2.5 flex items-center justify-end gap-3">
+                <div className="flex-1 max-w-[120px]">
+                  <RedProgressBar ttl={ttl} max={message.ttl || 180} />
+                </div>
+                <span 
+                  className="text-[11px] font-mono tracking-wider font-bold transition-colors duration-300" 
+                  style={{ 
+                    color: ttl <= 30 ? '#ff3333' : '#ff003c', 
+                    textShadow: ttl <= 30 ? '0 0 8px rgba(255,51,51,0.6)' : 'none' 
+                  }}
+                >
                   {Math.floor(ttl / 60)}:{(ttl % 60).toString().padStart(2, '0')}
                 </span>
               </div>
@@ -214,9 +250,13 @@ function ChatDetail({ conv, onBack }) {
   const { contacts, currentUser, deleteMessage, sendMessage, decryptMessage, addNotification } = useApp();
   const contact = contacts.find((c) => c.id === conv.contactId);
   const [messageText, setMessageText] = useState('');
+  const [attachment, setAttachment] = useState(null);
+  const fileInputRef = useRef(null);
   const [showMedia, setShowMedia] = useState(false);
   const [recording, setRecording] = useState(false);
   const [messageTtls, setMessageTtls] = useState({});
+  const vanishingIdsRef = useRef(new Set());
+  const [, setForceRender] = useState(0);
   const messagesEndRef = useRef(null);
 
   // Auto-scroll to bottom
@@ -230,32 +270,81 @@ function ChatDetail({ conv, onBack }) {
       setMessageTtls((prev) => {
         const next = { ...prev };
         let changed = false;
+        let vanishingChanged = false;
+
         conv.messages.forEach((m) => {
           if (m.isRead && !m.locked) {
+            let currentTtl = prev[m.id] !== undefined ? prev[m.id] : m.ttl;
+
+            // Compute current TTL
             if (m.expiresAt) {
               const current = Math.max(0, Math.ceil((m.expiresAt - Date.now()) / 1000));
-              if (next[m.id] !== current) {
+              if (currentTtl !== current) {
                 next[m.id] = current;
+                currentTtl = current;
                 changed = true;
               }
-            } else if (m.ttl > 0 || next[m.id] > 0) {
-              const current = next[m.id] !== undefined ? next[m.id] : m.ttl;
-              if (current > 0) {
-                next[m.id] = current - 1;
-                changed = true;
-              }
-              if (current <= 1) {
+            } else if (currentTtl > 0) {
+              next[m.id] = currentTtl - 1;
+              currentTtl -= 1;
+              changed = true;
+            }
+
+            // Trigger vanish animation if TTL hits 0
+            if (currentTtl <= 0 && !vanishingIdsRef.current.has(m.id)) {
+              vanishingIdsRef.current.add(m.id);
+              vanishingChanged = true;
+              
+              // Actually delete the message from global state after animation completes
+              setTimeout(() => {
                 deleteMessage(conv.id, m.id);
-              }
+              }, 600); // 600ms matches MessageBubble transitionDuration
             }
           }
         });
+
+        if (vanishingChanged) {
+          setForceRender(v => v + 1); // trigger re-render so UI sees the new vanishingIds
+        }
+
         return changed ? next : prev;
       });
     }, 1000);
 
     return () => clearInterval(interval);
   }, [conv.messages, conv.id, deleteMessage]);
+
+  const handleMediaSelect = (type) => {
+    setShowMedia(false);
+    if (fileInputRef.current) {
+      if (type === 'photo') fileInputRef.current.accept = 'image/*';
+      else if (type === 'video') fileInputRef.current.accept = 'video/*';
+      else fileInputRef.current.accept = '*/*';
+      fileInputRef.current.click();
+    }
+  };
+
+  const handleFileChange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 5 * 1024 * 1024) {
+      addNotification({ type: 'error', text: '⚠️ Fichier trop lourd (max 5 Mo)' });
+      e.target.value = '';
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      setAttachment({
+        url: event.target.result,
+        type: file.type,
+        name: file.name,
+      });
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
 
   if (!contact) return null;
 
@@ -264,12 +353,17 @@ function ChatDetail({ conv, onBack }) {
   // and encrypts using the Double Ratchet send chain.
   // Each message advances the chain key → old key destroyed → forward secrecy.
   const handleSend = async () => {
-    if (!messageText.trim()) return;
+    if (!messageText.trim() && !attachment) return;
+
+    let plaintext = messageText.trim();
+    if (attachment) {
+      plaintext = JSON.stringify({ text: plaintext, attachment });
+    }
 
     let payload = null;
     try {
       // Real ECDH + Double Ratchet encryption
-      payload = await encryptMessage(conv.id, conv.contactId, messageText.trim());
+      payload = await encryptMessage(conv.id, conv.contactId, plaintext);
     } catch (e) {
       addNotification({ type: 'error', text: '⚠️ Échec du chiffrement — message non envoyé' });
       return;
@@ -280,6 +374,7 @@ function ChatDetail({ conv, onBack }) {
       id: `msg-${Array.from(crypto.getRandomValues(new Uint8Array(8)), b => b.toString(16).padStart(2, '0')).join('')}`,
       senderId: 'me',
       text: messageText.trim(), // sender keeps plaintext locally (never re-encrypted to self)
+      attachment,
       time: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
       isRead: false,
       ttl: 0,
@@ -289,6 +384,7 @@ function ChatDetail({ conv, onBack }) {
 
     sendMessage(conv.id, newMsg);
     setMessageText('');
+    setAttachment(null);
   };
 
   // SECURITY — Phase 3: Real Double Ratchet decryption.
@@ -307,17 +403,30 @@ function ChatDetail({ conv, onBack }) {
   const handleDecrypt = async (msg) => {
     if (msg.locked === false) return;
 
-    let plaintext;
+    let plaintext = '';
+    let attachmentObj = null;
 
     if (msg.senderId === 'me') {
       // Case 1: own sent message — plaintext already stored locally by sender
       // A real client never needs to decrypt its own messages (it never forgets them)
       plaintext = msg.text;
+      attachmentObj = msg.attachment;
 
     } else if (msg.payload?.iv && msg.payload?.ciphertext) {
       // Case 2: received encrypted message — real Double Ratchet decryption
       try {
-        plaintext = await decryptPayload(conv.id, conv.contactId, msg.payload);
+        const decryptedStr = await decryptPayload(conv.id, conv.contactId, msg.payload);
+        try {
+          const parsed = JSON.parse(decryptedStr);
+          if (parsed.text !== undefined || parsed.attachment !== undefined) {
+             plaintext = parsed.text;
+             attachmentObj = parsed.attachment;
+          } else {
+             plaintext = decryptedStr;
+          }
+        } catch {
+          plaintext = decryptedStr;
+        }
       } catch {
         addNotification({
           type: 'error',
@@ -335,7 +444,7 @@ function ChatDetail({ conv, onBack }) {
       plaintext = legacyDecryptMap[msg.id] || 'Message déchiffré avec succès.';
     }
 
-    decryptMessage(conv.id, msg.id, plaintext);
+    decryptMessage(conv.id, msg.id, { text: plaintext, attachment: attachmentObj });
     setMessageTtls((prev) => ({ ...prev, [msg.id]: 180 }));
   };
 
@@ -382,6 +491,7 @@ function ChatDetail({ conv, onBack }) {
             isSent={msg.senderId === 'me'}
             onDecrypt={() => handleDecrypt(msg)}
             ttl={messageTtls[msg.id] !== undefined ? messageTtls[msg.id] : msg.ttl}
+            isVanishing={vanishingIdsRef.current.has(msg.id)}
           />
         ))}
         <div ref={messagesEndRef} />
@@ -392,7 +502,29 @@ function ChatDetail({ conv, onBack }) {
         <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/80 to-transparent pointer-events-none" />
         
         <div className="relative">
-          <MediaTray open={showMedia} onSelect={(type) => { setShowMedia(false); }} />
+          {attachment && (
+            <div className="absolute bottom-full left-4 mb-2 p-2 rounded-xl bg-black/80 backdrop-blur-md border border-[#ff003c]/20 flex items-center gap-3 w-64 shadow-2xl">
+              {attachment.type.startsWith('image/') ? (
+                <img src={attachment.url} alt="preview" className="w-12 h-12 object-cover rounded-md" />
+              ) : (
+                <div className="w-12 h-12 flex items-center justify-center bg-white/5 rounded-md text-[#ff003c]">
+                  <FileText size={20} />
+                </div>
+              )}
+              <div className="flex-1 min-w-0 pr-4">
+                <p className="text-[12px] text-white/90 truncate">{attachment.name}</p>
+              </div>
+              <button 
+                onClick={() => setAttachment(null)} 
+                className="absolute -top-2 -right-2 bg-[#ff003c] text-white p-1 rounded-full shadow-lg hover:scale-110 transition-transform active:scale-95"
+              >
+                <X size={12} />
+              </button>
+            </div>
+          )}
+
+          <MediaTray open={showMedia} onSelect={handleMediaSelect} />
+          <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" />
 
           {recording ? (
             <VoiceRecorder
@@ -430,7 +562,7 @@ function ChatDetail({ conv, onBack }) {
                 }}
               />
 
-              {messageText.trim() ? (
+              {messageText.trim() || attachment ? (
                 <button
                   onClick={handleSend}
                   className="flex-shrink-0 flex items-center justify-center rounded-full transition-transform active:scale-90 mb-1 mr-1"

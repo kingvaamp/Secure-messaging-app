@@ -53,13 +53,15 @@ function appReducer(state, action) {
     }
 
     case ACTIONS.DECRYPT_MESSAGE: {
-      const { convId, msgId, text } = action.payload;
+      const { convId, msgId, payloadData } = action.payload;
+      const text = typeof payloadData === 'string' ? payloadData : payloadData?.text || '';
+      const attachment = typeof payloadData === 'object' ? payloadData.attachment : null;
       const conversations = state.conversations.map((c) => {
         if (c.id !== convId) return c;
         return {
           ...c,
           messages: c.messages.map((m) =>
-            m.id === msgId ? { ...m, locked: false, text, isRead: true, ttl: 180, expiresAt: Date.now() + 180000 } : m
+            m.id === msgId ? { ...m, locked: false, text, attachment, isRead: true, ttl: 180, expiresAt: Date.now() + 180000 } : m
           ),
         };
       });
@@ -196,7 +198,7 @@ export function AppProvider({ children }) {
   const setActiveChat = useCallback((id) => dispatch({ type: ACTIONS.SET_ACTIVE_CHAT, payload: id }), []);
   const closeChat = useCallback(() => dispatch({ type: ACTIONS.CLOSE_CHAT }), []);
   const sendMessage = useCallback((convId, message) => dispatch({ type: ACTIONS.SEND_MESSAGE, payload: { convId, message } }), []);
-  const decryptMessage = useCallback((convId, msgId, text) => dispatch({ type: ACTIONS.DECRYPT_MESSAGE, payload: { convId, msgId, text } }), []);
+  const decryptMessage = useCallback((convId, msgId, payloadData) => dispatch({ type: ACTIONS.DECRYPT_MESSAGE, payload: { convId, msgId, payloadData } }), []);
   const deleteMessage = useCallback((convId, msgId) => dispatch({ type: ACTIONS.DELETE_MESSAGE, payload: { convId, msgId } }), []);
   const startCall = useCallback((call) => dispatch({ type: ACTIONS.START_CALL, payload: call }), []);
   const endCall = useCallback(() => dispatch({ type: ACTIONS.END_CALL }), []);
