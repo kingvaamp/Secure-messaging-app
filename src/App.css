@@ -1,0 +1,203 @@
+/* ============================================
+   Vanish — Global Styles & Animations
+   ============================================ */
+
+/* Hide scrollbars app-wide */
+* {
+  -webkit-scrollbar-width: none;
+  scrollbar-width: none;
+}
+*::-webkit-scrollbar {
+  display: none;
+}
+
+/* Selection color */
+::selection {
+  background-color: rgba(255, 0, 60, 0.3);
+  color: #fff;
+}
+
+/* ============================================
+   Keyframe Animations
+   ============================================ */
+
+/* TTL Progress bar pulse */
+@keyframes ttl-pulse {
+  0%, 100% {
+    box-shadow: 0 0 4px rgba(255, 0, 60, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 8px rgba(255, 0, 60, 0.8);
+  }
+}
+
+/* Radial data ring pulse (call overlay) */
+@keyframes ring-pulse {
+  0% {
+    transform: scale(0.9);
+    opacity: 0.8;
+  }
+  100% {
+    transform: scale(1.5);
+    opacity: 0;
+  }
+}
+
+/* Recording blink */
+@keyframes rec-blink {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+/* Slide in from right (chat detail) */
+@keyframes slide-in-right {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+/* Slide in from bottom (media tray, sheets) */
+@keyframes slide-in-bottom {
+  from {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/* Slide in from top (notifications) */
+@keyframes slide-in-top {
+  from {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/* Fade in with upward slide (list items) */
+@keyframes fade-in-up {
+  from {
+    transform: translateY(8px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/* Message bubble entrance */
+@keyframes bubble-in {
+  from {
+    transform: scale(0.85);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* Message destruction */
+@keyframes destroy-msg {
+  0% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.05);
+    opacity: 0.5;
+  }
+  100% {
+    transform: scale(0);
+    opacity: 0;
+    height: 0;
+  }
+}
+
+/* Glow pulse for active elements */
+@keyframes glow-pulse {
+  0%, 100% {
+    box-shadow: 0 0 4px rgba(255, 0, 60, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 12px rgba(255, 0, 60, 0.5);
+  }
+}
+
+/* ============================================
+   Utility Animation Classes
+   ============================================ */
+
+.animate-in {
+  animation-fill-mode: both;
+}
+
+.slide-in-from-top-2 {
+  animation: slide-in-top 0.3s ease-out;
+}
+
+.slide-in-from-bottom-2 {
+  animation: slide-in-bottom 0.25s ease-out;
+}
+
+/* Message bubble */
+.message-bubble-enter {
+  animation: bubble-in 0.2s ease-out;
+}
+
+/* Row stagger */
+.row-stagger {
+  animation: fade-in-up 0.3s ease-out both;
+}
+
+/* Destroy animation */
+.message-destroy {
+  animation: destroy-msg 0.4s ease-in forwards;
+  overflow: hidden;
+}
+
+/* ============================================
+   Input & Textarea Overrides
+   ============================================ */
+
+input, textarea {
+  caret-color: #ff003c;
+}
+
+/* Remove iOS default styling */
+input, textarea, button {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+/* Prevent text selection on UI elements */
+button, nav, .no-select {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* ============================================
+   Safe Area Handling
+   ============================================ */
+
+@supports (padding-bottom: env(safe-area-inset-bottom)) {
+  .safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}

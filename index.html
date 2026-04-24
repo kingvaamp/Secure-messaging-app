@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#050000" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+
+    <!-- ======================================================
+         Content Security Policy
+         Prevents XSS, data exfiltration, and code injection.
+         ====================================================== -->
+    <meta http-equiv="Content-Security-Policy" content="
+      default-src 'self';
+      script-src 'self';
+      style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
+      font-src 'self' https://fonts.gstatic.com;
+      connect-src 'self' https://*.supabase.co wss://*.supabase.co https://accounts.google.com;
+      img-src 'self' data: https:;
+      media-src 'self' blob:;
+      object-src 'none';
+      frame-src 'none';
+      base-uri 'self';
+      form-action 'self';
+      upgrade-insecure-requests;
+    " />
+
+    <!-- Prevent MIME-type sniffing -->
+    <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+
+    <!-- No referrer on navigation -->
+    <meta name="referrer" content="no-referrer" />
+
+    <title>Vanish — Messagerie Éphémère</title>
+  </head>
+
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
