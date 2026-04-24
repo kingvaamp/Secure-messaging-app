@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import {
   Smartphone, Key, Info, LogOut, Trash2,
   Shield, Eye, Fingerprint, Bell, Volume2,
@@ -23,19 +24,49 @@ const ACCOUNT_ITEMS = [
 ];
 
 export default function ProfileScreen() {
-  const { currentUser, securitySettings, updateSecurity, stats } = useApp();
+  const { currentUser, securitySettings, updateSecurity, stats, updateCurrentUser, addNotification } = useApp();
   const { signOut } = useAuth();
+  const fileInputRef = useRef(null);
 
   const handleLogout = () => {
     signOut();
+  };
+
+  const handleAvatarClick = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.click();
+    }
+  };
+
+  const handleFileChange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      addNotification({ type: 'error', text: 'Veuillez sélectionner une image' });
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      addNotification({ type: 'error', text: 'Image trop lourde (max 5 Mo)' });
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      updateCurrentUser({ avatar: event.target.result });
+      addNotification({ type: 'success', text: 'Photo de profil mise à jour' });
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
   };
 
   return (
     <div className="h-full flex flex-col overflow-y-auto" style={{ scrollbarWidth: 'none' }}>
       {/* Header with avatar */}
       <div className="flex flex-col items-center pt-8 pb-6 px-4">
-        <div className="relative">
-          <Av name={currentUser.name} size={80} online={false} />
+        <div className="relative cursor-pointer transition-transform active:scale-95" onClick={handleAvatarClick}>
+          <Av name={currentUser.name} src={currentUser.avatar} size={80} online={false} />
           <button
             className="absolute bottom-0 right-0 flex items-center justify-center rounded-full"
             style={{
@@ -47,6 +78,13 @@ export default function ProfileScreen() {
           >
             <Edit3 size={12} className="text-white" />
           </button>
+          <input 
+            type="file" 
+            ref={fileInputRef} 
+            onChange={handleFileChange} 
+            accept="image/*" 
+            className="hidden" 
+          />
         </div>
 
         <h2 className="text-xl font-medium text-white mt-4">{currentUser.name}</h2>

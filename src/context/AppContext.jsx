@@ -22,6 +22,7 @@ export const ACTIONS = {
   UPDATE_SECURITY: 'UPDATE_SECURITY',
   ADD_CONTACT: 'ADD_CONTACT',
   SET_CONTACTS_FILTER: 'SET_CONTACTS_FILTER',
+  UPDATE_CURRENT_USER: 'UPDATE_CURRENT_USER',
 };
 
 // ============================================
@@ -126,6 +127,12 @@ function appReducer(state, action) {
     case ACTIONS.SET_CONTACTS_FILTER:
       return { ...state, contactsFilter: action.payload };
 
+    case ACTIONS.UPDATE_CURRENT_USER:
+      return {
+        ...state,
+        currentUser: { ...state.currentUser, ...action.payload },
+      };
+
     case 'TICK_TTL': {
       let changed = false;
       const now = Date.now();
@@ -208,6 +215,7 @@ export function AppProvider({ children }) {
   const updateSecurity = useCallback((settings) => dispatch({ type: ACTIONS.UPDATE_SECURITY, payload: settings }), []);
   const addContact = useCallback((contact) => dispatch({ type: ACTIONS.ADD_CONTACT, payload: contact }), []);
   const setContactsFilter = useCallback((filter) => dispatch({ type: ACTIONS.SET_CONTACTS_FILTER, payload: filter }), []);
+  const updateCurrentUser = useCallback((updates) => dispatch({ type: ACTIONS.UPDATE_CURRENT_USER, payload: updates }), []);
 
   const value = {
     ...state,
@@ -225,6 +233,7 @@ export function AppProvider({ children }) {
     updateSecurity,
     addContact,
     setContactsFilter,
+    updateCurrentUser,
   };
 
   return (

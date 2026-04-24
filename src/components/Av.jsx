@@ -16,27 +16,40 @@ function getInitials(name) {
   return name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
 }
 
-export default function Av({ name, size = 36, online = false, borderColor }) {
+export default function Av({ name, src, size = 36, online = false, borderColor }) {
   const color = getAvatarColor(name);
   const initials = getInitials(name);
   const fontSize = size * 0.42;
 
   return (
     <div className="relative inline-flex-shrink-0">
-      <div
-        className="flex items-center justify-center rounded-full"
-        style={{
-          width: size,
-          height: size,
-          backgroundColor: color,
-          fontSize: `${fontSize}px`,
-          fontWeight: 500,
-          color: '#fff',
-          border: borderColor ? `2px solid ${borderColor}` : 'none',
-        }}
-      >
-        {initials}
-      </div>
+      {src ? (
+        <img
+          src={src}
+          alt={name}
+          className="rounded-full object-cover"
+          style={{
+            width: size,
+            height: size,
+            border: borderColor ? `2px solid ${borderColor}` : 'none',
+          }}
+        />
+      ) : (
+        <div
+          className="flex items-center justify-center rounded-full"
+          style={{
+            width: size,
+            height: size,
+            backgroundColor: color,
+            fontSize: `${fontSize}px`,
+            fontWeight: 500,
+            color: '#fff',
+            border: borderColor ? `2px solid ${borderColor}` : 'none',
+          }}
+        >
+          {initials}
+        </div>
+      )}
       {online && (
         <span
           className="absolute rounded-full border-2 border-[#050000]"
