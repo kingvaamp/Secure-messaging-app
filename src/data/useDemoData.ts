@@ -4,7 +4,15 @@
 // production so the demoData.js module is never referenced and tree-shakes
 // out of the production bundle entirely.
 
-import { DEFAULT_SECURITY_SETTINGS } from '@/data/demoData';
+import {
+  DEMO_CONTACTS,
+  DEMO_CONVERSATIONS,
+  DEMO_CALLS,
+  DEMO_CURRENT_USER,
+  DEMO_CURRENT_USER_BOB,
+  DEMO_STATS,
+  DEFAULT_SECURITY_SETTINGS,
+} from '@/data/demoData';
 
 // ── Empty production fallbacks ────────────────────────────────────────────────
 const EMPTY_STATE = {
@@ -31,19 +39,13 @@ export function useDemoData() {
     return EMPTY_STATE;
   }
 
-  // Development only: use a Function constructor to bypass static analysis
-  // so bundlers see this as unreachable in production and exclude demoData.js.
-  // eslint-disable-next-line no-new-func
-  const dynamicRequire = new Function('module', 'return require(module)') as (m: string) => Record<string, unknown>;
-  const demo = dynamicRequire('@/data/demoData');
-
   return {
-    contacts:         demo.DEMO_CONTACTS,
-    conversations:    demo.DEMO_CONVERSATIONS,
-    calls:            demo.DEMO_CALLS,
-    currentUser:      demo.DEMO_CURRENT_USER,
-    currentUserBob:   demo.DEMO_CURRENT_USER_BOB,
-    stats:            demo.DEMO_STATS,
+    contacts:         DEMO_CONTACTS,
+    conversations:    DEMO_CONVERSATIONS,
+    calls:            DEMO_CALLS,
+    currentUser:      DEMO_CURRENT_USER,
+    currentUserBob:   DEMO_CURRENT_USER_BOB,
+    stats:            DEMO_STATS,
     securitySettings: DEFAULT_SECURITY_SETTINGS,
   };
 }

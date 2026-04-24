@@ -35,6 +35,13 @@ import { supabase } from '@/lib/supabase';
 /** The current user's ECDH P-256 identity key pair for this session */
 let myKeyPair = null;
 
+/**
+ * Demo-only: per-contact ephemeral key pairs generated locally.
+ * Used only when __DEV_DEMO__ === true AND the contact has no Supabase key.
+ * Cleared on sign-out alongside all other in-memory state.
+ */
+const demoContactKeyPairs = new Map();
+
 /** Per-conversation Double Ratchet instances: conversationId → DoubleRatchet */
 const ratchets = new Map();
 
@@ -57,9 +64,17 @@ async function getMyKeyPair() {
 
 /**
  * Fetch a contact's published ECDH P-256 public key from Supabase.
- * Throws if the contact has not published a key — session cannot be established.
  *
- * @param {string} contactId — Supabase user UUID
+ * In demo mode (__DEV_DEMO__ === true):
+ *   - First tries Supabase (real key if available).
+ *   - If not found, falls back to a locally-generated ephemeral key pair
+ *     stored in demoContactKeyPairs so the same key is reused for the
+ *     lifetime of the session — message sending works without a key server.
+ *
+ * In production (__DEV_DEMO__ === false):
+ *   - Throws immediately if no key is found — no fallback.
+ *
+ * @param {string} contactId — Supabase user UUID or demo id
  * @returns {Promise<string>} base64 raw ECDH P-256 public key
  */
 async function fetchContactPublicKey(contactId) {
@@ -69,10 +84,22 @@ async function fetchContactPublicKey(contactId) {
     .eq('user_id', contactId)
     .single();
 
-  if (error || !data) {
+  if (!error && data?.public_key_b64) {
+    return data.public_key_b64;
+  }
+
+  // Production: hard fail — no key server entry means no E2E session
+  if (!__DEV_DEMO__) {
     throw new Error('Contact has no published key — cannot establish session');
   }
-  return data.public_key_b64;
+
+  // Demo mode fallback: generate (or reuse) a local ephemeral key pair
+  // so the app can be tested without a live Supabase key server.
+  if (!demoContactKeyPairs.has(contactId)) {
+    const kp = await generateKeyPair();
+    demoContactKeyPairs.set(contactId, kp);
+  }
+  return demoContactKeyPairs.get(contactId).publicB64;
 }
 
 /**
@@ -208,6 +235,7 @@ export function clearAllSessions() {
     myKeyPair.publicB64 = null;
     myKeyPair = null;
   }
+  demoContactKeyPairs.clear(); // clear demo fallback keys
   ratchets.clear();
 }
 
