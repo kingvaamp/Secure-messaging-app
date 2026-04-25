@@ -7,41 +7,83 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { Shield, Fingerprint, Lock } from 'lucide-react';
 import { useApp } from '@/context/AppContext';
+import { useAuth } from '@/context/AuthContext';
+import { supabase, isDemoMode } from '@/lib/supabase';
+import { toB64, fromB64 } from '@/crypto/primitives';
 
 // ============================================
 // WebAuthn Biometric Authentication
 // Uses platform authenticator (Touch ID / Face ID / Windows Hello)
 // ============================================
-async function requestBiometricAuth() {
-  if (!window.PublicKeyCredential) {
-    throw new Error('WebAuthn not supported in this browser');
+async function requestBiometricAuth(supabaseSession) {
+  if (isDemoMode()) {
+    console.log('[WebAuthn] Demo mode fallback: using local challenge');
+    if (!window.PublicKeyCredential) return false;
+    const challenge = crypto.getRandomValues(new Uint8Array(32));
+    try {
+      await navigator.credentials.get({
+        publicKey: {
+          challenge,
+          rpId: window.location.hostname,
+          userVerification: 'required',
+          timeout: 30000,
+          allowCredentials: [],
+        },
+      });
+      return true;
+    } catch {
+      return false;
+    }
   }
 
-  // Check if a platform authenticator is available
-  const available = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
-  if (!available) {
-    throw new Error('No platform authenticator (Face ID / Touch ID) available');
+  if (!window.PublicKeyCredential) throw new Error('WebAuthn not supported');
+
+  // 1. Request server-issued challenge
+  const { data: challengeData, error: challengeError } = await supabase.functions.invoke('webauthn/challenge', {
+    headers: { Authorization: `Bearer ${supabaseSession.access_token}` },
+    body: {}
+  });
+  
+  if (challengeError || !challengeData?.challenge) {
+    throw new Error('Impossible d\'obtenir le challenge du serveur');
   }
 
-  // Challenge — in production this MUST come from the server
-  // Demo: generate a local random challenge
-  const challenge = crypto.getRandomValues(new Uint8Array(32));
+  const challengeBytes = fromB64(challengeData.challenge);
 
+  // 2. Run WebAuthn ceremony with server challenge
+  let assertion;
   try {
-    await navigator.credentials.get({
+    assertion = await navigator.credentials.get({
       publicKey: {
-        challenge,
+        challenge: challengeBytes,
         rpId: window.location.hostname,
-        userVerification: 'required', // Force biometric — no PIN fallback
+        userVerification: 'required',
         timeout: 30000,
-        allowCredentials: [], // Accept any registered credential on this device
-      },
+        allowCredentials: [], // accept any credential registered on this device
+      }
     });
-    return true;
   } catch (e) {
-    // User cancelled or biometric failed
-    return false;
+    return false; // User cancelled or biometric failed
   }
+
+  // 3. Submit assertion to server for verification
+  const serialized = {
+    id: assertion.id,
+    rawId: toB64(assertion.rawId),
+    response: {
+      authenticatorData: toB64(assertion.response.authenticatorData),
+      clientDataJSON:    toB64(assertion.response.clientDataJSON),
+      signature:         toB64(assertion.response.signature),
+    },
+    challenge_b64: challengeData.challenge,
+  };
+
+  const { data: result } = await supabase.functions.invoke('webauthn/verify', {
+    body: serialized,
+    headers: { Authorization: `Bearer ${supabaseSession.access_token}` }
+  });
+
+  return result?.verified === true;
 }
 
 // ============================================
@@ -79,24 +121,36 @@ function PrivacyOverlay({ visible }) {
 // ============================================
 // Biometric Lock Screen
 // ============================================
-function BiometricLockScreen({ onUnlock, onBypass }) {
+function BiometricLockScreen({ session, onUnlock, onBypass }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const failureCountRef = useRef(0);
 
   const handleAuth = async () => {
     setLoading(true);
     setError('');
     try {
-      const success = await requestBiometricAuth();
+      const success = await requestBiometricAuth(session);
       if (success) {
+        failureCountRef.current = 0;
         onUnlock();
       } else {
-        setError('Authentification annulée. Réessayez.');
+        failureCountRef.current += 1;
+        if (failureCountRef.current >= 3) {
+          setError('Trop d\'échecs. Verrouillage de sécurité...');
+          setTimeout(onBypass, 1500); // Trigger hard-lock / logout after 3 failures
+        } else {
+          setError(`Authentification échouée. ${3 - failureCountRef.current} essai(s) restant(s).`);
+        }
       }
     } catch (e) {
-      // WebAuthn not available — bypass gracefully in demo
-      setError('Face ID / Touch ID non disponible sur ce navigateur.');
-      setTimeout(onBypass, 2000);
+      if (isDemoMode()) {
+        setError('Mode démo — authentification locale ignorée.');
+        setTimeout(onUnlock, 1500);
+      } else {
+        setError('Face ID / Touch ID non disponible ou erreur serveur.');
+        setTimeout(onBypass, 2000);
+      }
     }
     setLoading(false);
   };
@@ -168,6 +222,7 @@ function BiometricLockScreen({ onUnlock, onBypass }) {
 // ============================================
 export default function SecurityGuard({ children }) {
   const { securitySettings } = useApp();
+  const { session, signOut } = useAuth();
   const [privacyOverlayVisible, setPrivacyOverlayVisible] = useState(false);
   const [biometricLocked, setBiometricLocked] = useState(false);
   const lockTimerRef = useRef(null);
@@ -257,8 +312,12 @@ export default function SecurityGuard({ children }) {
       {/* Biometric lock screen */}
       {biometricLocked && securitySettings.faceIdLock && (
         <BiometricLockScreen
+          session={session}
           onUnlock={() => setBiometricLocked(false)}
-          onBypass={() => setBiometricLocked(false)} // graceful fallback
+          onBypass={() => {
+            // Hard lock -> force logout on max failures or missing auth
+            signOut();
+          }}
         />
       )}
     </>

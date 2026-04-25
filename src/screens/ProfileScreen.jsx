@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import {
   Smartphone, Key, Info, LogOut, Trash2,
   Shield, Eye, Fingerprint, Bell, Volume2,
@@ -8,6 +8,7 @@ import { useApp } from '@/context/AppContext';
 import { useAuth } from '@/context/AuthContext';
 import Av from '@/components/Av';
 import Tog from '@/components/Tog';
+import { registerBiometric } from '@/lib/webauthn';
 
 const SECURITY_ITEMS = [
   { key: 'blockScreenshots', label: 'Bloquer les captures', desc: 'Empêcher les captures dans les chats', icon: Shield },
@@ -25,8 +26,9 @@ const ACCOUNT_ITEMS = [
 
 export default function ProfileScreen() {
   const { currentUser, securitySettings, updateSecurity, stats, updateCurrentUser, addNotification } = useApp();
-  const { signOut } = useAuth();
+  const { session, signOut } = useAuth();
   const fileInputRef = useRef(null);
+  const [isRegisteringBiometric, setIsRegisteringBiometric] = useState(false);
 
   const handleLogout = () => {
     signOut();
@@ -59,6 +61,25 @@ export default function ProfileScreen() {
     };
     reader.readAsDataURL(file);
     e.target.value = '';
+  };
+
+  const handleSecurityToggle = async (key, newValue) => {
+    // Intercept Face ID enable to run WebAuthn registration
+    if (key === 'faceIdLock' && newValue === true) {
+      setIsRegisteringBiometric(true);
+      try {
+        await registerBiometric(session);
+        updateSecurity({ faceIdLock: true });
+        addNotification({ type: 'success', text: 'Face ID / Touch ID configuré avec succès' });
+      } catch (err) {
+        addNotification({ type: 'error', text: err.message || 'Échec de la configuration biométrique' });
+        // Don't update security setting so it remains off
+      } finally {
+        setIsRegisteringBiometric(false);
+      }
+    } else {
+      updateSecurity({ [key]: newValue });
+    }
   };
 
   return (
@@ -147,7 +168,8 @@ export default function ProfileScreen() {
               </div>
               <Tog
                 checked={securitySettings[item.key]}
-                onChange={(v) => updateSecurity({ [item.key]: v })}
+                disabled={item.key === 'faceIdLock' && isRegisteringBiometric}
+                onChange={(v) => handleSecurityToggle(item.key, v)}
               />
             </div>
           ))}

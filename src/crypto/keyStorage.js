@@ -35,6 +35,8 @@ import { encrypt, decrypt, toB64, fromB64 } from './primitives';
 const STORAGE_PREFIX  = 'vanish_';
 const IDENTITY_KEY    = 'identity_key';
 const RATCHET_PREFIX  = 'ratchet_';
+const SPK_PREFIX      = 'spk_';
+const OPK_PREFIX      = 'opk_';
 const IDB_DB_NAME     = 'VanishKeyStore';
 const IDB_DB_VERSION  = 1;
 const IDB_STORE_NAME  = 'wrapping_keys';
@@ -341,4 +343,177 @@ export async function wipeAllKeys() {
  */
 export async function hasIdentityKey() {
   return localStorage.getItem(STORAGE_PREFIX + IDENTITY_KEY) !== null;
+}
+
+// ── X3DH Prekey Storage ───────────────────────────────────────────────────────
+
+/**
+ * Save a Signed Pre-Key (SPK) private key to encrypted storage.
+ *
+ * @param {{ keyId: number, privateJwk: object, privateKey?: CryptoKey }} spk
+ */
+export async function saveSignedPreKey(spk) {
+  await secureStore(SPK_PREFIX + spk.keyId, {
+    keyId:      spk.keyId,
+    privateJwk: spk.privateJwk,
+    createdAt:  spk.createdAt || new Date().toISOString(),
+  });
+}
+
+/**
+ * Load a Signed Pre-Key private key from encrypted storage.
+ *
+ * Returns an object with a live CryptoKey privateKey, re-imported from the
+ * stored JWK, ready for use in ECDH derivation.
+ *
+ * @param {number} keyId
+ * @returns {Promise<{ keyId: number, privateKey: CryptoKey, privateJwk: object }|null>}
+ */
+export async function loadSignedPreKey(keyId) {
+  const stored = await secureLoad(SPK_PREFIX + keyId);
+  if (!stored?.privateJwk) return null;
+
+  const privateKey = await crypto.subtle.importKey(
+    'jwk',
+    stored.privateJwk,
+    { name: 'ECDH', namedCurve: 'P-256' },
+    false,
+    ['deriveBits']
+  );
+
+  return { keyId: stored.keyId, privateKey, privateJwk: stored.privateJwk };
+}
+
+/**
+ * Load metadata for the current active Signed Pre-Key.
+ * @returns {Promise<{ keyId: number, createdAt: string }|null>}
+ */
+export async function loadSignedPreKeyMeta() {
+  // A simple strategy since we don't have an index: find the highest keyId
+  // For production with many rotations, store the "active" ID in a dedicated key.
+  // Here we just scan localStorage for the active one (highest ID).
+  let latestKeyId = -1;
+  let latestCreatedAt = null;
+
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key && key.startsWith(STORAGE_PREFIX + SPK_PREFIX)) {
+      try {
+        const payloadStr = localStorage.getItem(key);
+        if (payloadStr) {
+          // It's envelope encrypted, we have to decrypt to read metadata
+          // Alternatively, we could just iterate backwards from a large number,
+          // but let's just decrypt and find it.
+          const localKey = key.substring(STORAGE_PREFIX.length);
+          const decrypted = await secureLoad(localKey);
+          if (decrypted && decrypted.keyId > latestKeyId) {
+            // Check if it's not in grace period (we can add a 'graceExpiresAt' flag to check if needed)
+            latestKeyId = decrypted.keyId;
+            latestCreatedAt = decrypted.createdAt;
+          }
+        }
+      } catch (e) {}
+    }
+  }
+  
+  if (latestKeyId === -1) return null;
+  return { keyId: latestKeyId, createdAt: latestCreatedAt };
+}
+
+/**
+ * Mark an old Signed Pre-Key as being in a grace period before deletion.
+ * @param {number} keyId
+ * @param {number} expiresAt - timestamp in ms
+ */
+export async function markSPKForGrace(keyId, expiresAt) {
+  const stored = await secureLoad(SPK_PREFIX + keyId);
+  if (stored) {
+    stored.graceExpiresAt = expiresAt;
+    await secureStore(SPK_PREFIX + keyId, stored);
+  }
+}
+
+/**
+ * Delete an expired Signed Pre-Key from storage.
+ * @param {number} keyId 
+ */
+export async function deleteExpiredSPK(keyId) {
+  const key = STORAGE_PREFIX + SPK_PREFIX + keyId;
+  try {
+    const noise = toB64(crypto.getRandomValues(new Uint8Array(64)).buffer);
+    localStorage.setItem(key, noise);
+  } catch {}
+  localStorage.removeItem(key);
+}
+
+/**
+ * Save an array of One-Time Pre-Keys (OPKs) to encrypted storage.
+ * Each OPK is saved under its own storage key so individual keys
+ * can be deleted after consumption.
+ *
+ * @param {Array<{ keyId: number, privateJwk: object }>} opks
+ */
+export async function saveOneTimePreKeys(opks) {
+  await Promise.all(
+    opks.map((opk) =>
+      secureStore(OPK_PREFIX + opk.keyId, {
+        keyId:      opk.keyId,
+        privateJwk: opk.privateJwk,
+      })
+    )
+  );
+}
+
+/**
+ * Load a single One-Time Pre-Key by keyId from encrypted storage.
+ *
+ * @param {number} keyId
+ * @returns {Promise<{ keyId: number, privateKey: CryptoKey, privateJwk: object }|null>}
+ */
+export async function loadOneTimePreKey(keyId) {
+  const stored = await secureLoad(OPK_PREFIX + keyId);
+  if (!stored?.privateJwk) return null;
+
+  const privateKey = await crypto.subtle.importKey(
+    'jwk',
+    stored.privateJwk,
+    { name: 'ECDH', namedCurve: 'P-256' },
+    false,
+    ['deriveBits']
+  );
+
+  const result = { keyId: stored.keyId, privateKey, privateJwk: stored.privateJwk };
+  
+  // Consume-once logic: delete immediately after successful read
+  await deleteOneTimePreKey(keyId).catch(() => {});
+  
+  return result;
+}
+
+/**
+ * Delete a One-Time Pre-Key from localStorage after it has been consumed.
+ * Call this after x3dhRespond() to prevent OPK reuse.
+ *
+ * @param {number} keyId
+ */
+export async function deleteOneTimePreKey(keyId) {
+  const key = STORAGE_PREFIX + OPK_PREFIX + keyId;
+  // Overwrite with noise before removal (best-effort memory scrub)
+  try {
+    const noise = toB64(crypto.getRandomValues(new Uint8Array(64)).buffer);
+    localStorage.setItem(key, noise);
+  } catch { /* ignore */ }
+  localStorage.removeItem(key);
+}
+
+/**
+ * Returns the next available One-Time Pre-Key ID by incrementing a persistent counter.
+ * @returns {Promise<number>}
+ */
+export async function getNextOPKId() {
+  const counterKey = STORAGE_PREFIX + 'opk_counter';
+  const current = parseInt(localStorage.getItem(counterKey) || '0', 10);
+  const nextId = current + 1;
+  localStorage.setItem(counterKey, nextId.toString());
+  return nextId;
 }

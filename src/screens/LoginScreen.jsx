@@ -3,33 +3,8 @@ import { Lock, ShieldAlert } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import PlasmaBackground from '@/components/PlasmaBackground';
 
-// Rate limiting constants
+// Rate limiting constants for UI display limits only
 const MAX_ATTEMPTS = 5;
-const LOCKOUT_DURATION_MS = 15 * 60 * 1000; // 15 minutes
-const ATTEMPTS_KEY = 'vanish_otp_attempts';
-const LOCKOUT_KEY = 'vanish_otp_lockout';
-
-function getRateLimitState() {
-  const attempts = parseInt(sessionStorage.getItem(ATTEMPTS_KEY) || '0', 10);
-  const lockoutUntil = parseInt(sessionStorage.getItem(LOCKOUT_KEY) || '0', 10);
-  const isLockedOut = Date.now() < lockoutUntil;
-  return { attempts, lockoutUntil, isLockedOut };
-}
-
-function recordFailedAttempt() {
-  const { attempts } = getRateLimitState();
-  const newAttempts = attempts + 1;
-  sessionStorage.setItem(ATTEMPTS_KEY, String(newAttempts));
-  if (newAttempts >= MAX_ATTEMPTS) {
-    sessionStorage.setItem(LOCKOUT_KEY, String(Date.now() + LOCKOUT_DURATION_MS));
-  }
-  return newAttempts;
-}
-
-function clearRateLimitState() {
-  sessionStorage.removeItem(ATTEMPTS_KEY);
-  sessionStorage.removeItem(LOCKOUT_KEY);
-}
 
 export default function LoginScreen() {
   const { signInWithOtp, verifyOtp, signInWithGoogle, error } = useAuth();
@@ -39,9 +14,9 @@ export default function LoginScreen() {
   const [localError, setLocalError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // Rate limiting state
-  const [attempts, setAttempts] = useState(() => getRateLimitState().attempts);
-  const [lockoutUntil, setLockoutUntil] = useState(() => getRateLimitState().lockoutUntil);
+  // Rate limiting state (driven strictly by server responses)
+  const [attemptsLeft, setAttemptsLeft] = useState(MAX_ATTEMPTS);
+  const [lockoutUntil, setLockoutUntil] = useState(0);
   const [countdown, setCountdown] = useState(0);
 
   // Countdown timer for lockout
@@ -58,7 +33,6 @@ export default function LoginScreen() {
   }, [lockoutUntil]);
 
   const isLockedOut = Date.now() < lockoutUntil;
-  const attemptsLeft = MAX_ATTEMPTS - attempts;
 
   const handlePhoneSubmit = async () => {
     setLocalError('');
@@ -69,8 +43,13 @@ export default function LoginScreen() {
     setLoading(true);
     const result = await signInWithOtp(phone);
     setLoading(false);
+    
     if (result.success) {
       setStep('otp');
+    } else if (result.rateLimited) {
+      const until = Date.now() + result.retryAfter * 1000;
+      setLockoutUntil(until);
+      setLocalError(`Trop de requêtes. Réessayez dans ${Math.ceil(result.retryAfter / 60)} min.`);
     } else {
       setLocalError(error || 'Échec de l\'envoi du code');
     }
@@ -94,19 +73,16 @@ export default function LoginScreen() {
     const result = await verifyOtp(phone, otp);
     setLoading(false);
 
-    if (!result.success) {
-      // Record failed attempt
-      const newAttempts = recordFailedAttempt();
-      setAttempts(newAttempts);
-      if (newAttempts >= MAX_ATTEMPTS) {
-        const until = Date.now() + LOCKOUT_DURATION_MS;
-        setLockoutUntil(until);
-        setLocalError(`Compte temporairement bloqué — réessayez dans 15 minutes.`);
-      } else {
-        setLocalError(`Code invalide. ${MAX_ATTEMPTS - newAttempts} tentative(s) restante(s).`);
-      }
+    if (result.success) {
+      // Success, AuthContext handles session setup
+      setAttemptsLeft(MAX_ATTEMPTS);
+    } else if (result.rateLimited) {
+      const until = Date.now() + result.retryAfter * 1000;
+      setLockoutUntil(until);
+      setLocalError(`Trop d'échecs. Réessayez dans ${Math.ceil(result.retryAfter / 60)} min.`);
     } else {
-      clearRateLimitState();
+      setAttemptsLeft(result.attemptsRemaining ?? 0);
+      setLocalError(`Code invalide. ${result.attemptsRemaining ?? 0} tentative(s) restante(s).`);
     }
   };
 
@@ -230,7 +206,7 @@ export default function LoginScreen() {
           </button>
 
           {/* Rate limit warning */}
-          {!isLockedOut && attempts > 0 && attemptsLeft > 0 && (
+          {!isLockedOut && attemptsLeft < MAX_ATTEMPTS && attemptsLeft > 0 && (
             <div className="flex items-center justify-center gap-1.5">
               <ShieldAlert size={11} style={{ color: 'rgba(255,120,0,0.8)' }} />
               <p className="text-[10px] text-center" style={{ color: 'rgba(255,120,0,0.8)' }}>

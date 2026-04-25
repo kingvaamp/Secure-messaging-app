@@ -1,9 +1,13 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { supabase, isDemoMode } from '@/lib/supabase';
 import { wipeAllKeys } from '@/crypto/keyStorage';
-import { clearAllSessions, publishMyPublicKey } from '@/crypto/sessionManager';
+import { clearAllSessions, publishX3DHBundle, getMyIdentityKeyPair } from '@/crypto/sessionManager';
+import { runPrekeyMaintenance } from '@/crypto/prekeyManager';
 
 const AuthContext = createContext(null);
+
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || 'http://localhost';
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || 'demo-key';
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
@@ -20,15 +24,22 @@ export function AuthProvider({ children }) {
     });
 
     // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
       setSession(session);
       setUser(session?.user ?? null);
       setLoading(false);
-      // Publish ECDH public key whenever a real (non-demo) session is established
+      // Publish the full X3DH prekey bundle whenever a real (non-demo) session is established
       if (session?.user?.id && !isDemoMode()) {
-        publishMyPublicKey(session.user.id).catch(() => {
-          // Non-fatal — key will be re-published on next login
+        publishX3DHBundle(session.user.id).catch(() => {
+          // Non-fatal — bundle will be re-published on next login
         });
+        
+        try {
+          const idKP = await getMyIdentityKeyPair(); // from sessionManager
+          runPrekeyMaintenance(session.user.id, idKP); // non-blocking, fire-and-forget
+        } catch (err) {
+          console.warn('Failed to start prekey maintenance:', err);
+        }
       }
     });
 
@@ -46,11 +57,22 @@ export function AuthProvider({ children }) {
       return { success: false };
     }
     
-    const { error } = await supabase.auth.signInWithOtp({ phone });
-    if (error) {
-      setError(error.message);
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/auth-proxy/request-otp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON_KEY },
+      body: JSON.stringify({ phone })
+    });
+
+    if (res.status === 429) {
+      const { retry_after } = await res.json();
+      return { success: false, rateLimited: true, retryAfter: retry_after };
+    }
+
+    if (!res.ok) {
+      setError('Échec de l\'envoi du code');
       return { success: false };
     }
+
     return { success: true };
   }, []);
 
@@ -72,17 +94,29 @@ export function AuthProvider({ children }) {
       return { success: false };
     }
 
-    const { data, error } = await supabase.auth.verifyOtp({
-      phone,
-      token,
-      type: 'sms',
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/auth-proxy/verify-otp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON_KEY },
+      body: JSON.stringify({ phone, token })
     });
-    if (error) {
-      setError(error.message);
-      return { success: false };
+
+    if (res.status === 429) {
+      const body = await res.json();
+      return { success: false, rateLimited: true, retryAfter: body.retry_after };
     }
-    setSession(data.session);
-    setUser(data.user);
+
+    if (!res.ok) {
+      const body = await res.json();
+      return { success: false, attemptsRemaining: body.attempts_remaining };
+    }
+
+    const { session: newSession, user: newUser } = await res.json();
+    
+    // Set session manually since we bypassed supabase.auth
+    await supabase.auth.setSession(newSession);
+    
+    setSession(newSession);
+    setUser(newUser);
     return { success: true };
   }, []);
 
