@@ -47,5 +47,15 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>VanishText needs camera access to take photos and videos</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>VanishText needs photo library access to send images</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>VanishText needs microphone access for voice messages</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
 </dict>
 </plist>

@@ -1,0 +1,36 @@
+{
+  "iosIdentifier": "com.kingvaamp.vanishtext",
+  "iosScheme": "VanishText",
+  "appDisplayName": "VanishText",
+  "appBundleId": "com.kingvaamp.vanishtext",
+  
+  "capabilities": {
+    "pushNotifications": true,
+    "backgroundModes": ["remote-notification", "fetch"],
+    " AssociatedDomains": []
+  },
+  
+  "entitlements": {
+    "aps-environment": "development",
+    "com.apple.developer.applesignin": ["Default"]
+  },
+  
+  "info": {
+    "NSCameraUsageDescription": "VanishText needs camera access to take photos and videos",
+    "NSPhotoLibraryUsageDescription": "VanishText needs photo library access to send images",
+    "NSMicrophoneUsageDescription": "VanishText needs microphone access for voice messages",
+    "UIBackgroundModes": ["remote-notification"]
+  },
+  
+  "signing": {
+    "developmentTeam": "YOUR_TEAM_ID",
+    "codeSignIdentity": "Apple Development",
+    "codeSignStyle": "Automatic",
+    "provisioningStyle": "Automatic"
+  },
+  
+  "build": {
+    "configuration": "Debug",
+    "scheme": "VanishText"
+  }
+}

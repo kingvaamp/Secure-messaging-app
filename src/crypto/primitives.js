@@ -25,8 +25,8 @@ export const fromB64 = (str) =>
 export async function generateKeyPair() {
   const kp = await crypto.subtle.generateKey(
     { name: 'ECDH', namedCurve: 'P-256' },
-    true, // extractable
-    ['deriveKey', 'deriveBits']
+    false, // NOT extractable - security best practice
+    ['deriveBits']
   );
   const publicRaw = await crypto.subtle.exportKey('raw', kp.publicKey);
   const privateJwk = await crypto.subtle.exportKey('jwk', kp.privateKey);
@@ -40,13 +40,14 @@ export async function generateKeyPair() {
 
 /**
  * Import a public key from base64-encoded raw ECDH P-256 key
+ * Public keys can be imported as extractable for export purposes
  */
 export async function importPublicKey(b64) {
   return crypto.subtle.importKey(
     'raw',
     fromB64(b64),
     { name: 'ECDH', namedCurve: 'P-256' },
-    true,
+    true, // extractable - public keys can be shared
     []
   );
 }

@@ -6,24 +6,25 @@
     <meta name="theme-color" content="#050000" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="screen-capture" content="deny" />
+    <meta name="disabled-features" content="Screenshot, ScreenCapture, ScreenRecording" />
 
     <!-- ======================================================
          Content Security Policy
          Prevents XSS, data exfiltration, and code injection.
          ====================================================== -->
     <meta http-equiv="Content-Security-Policy" content="
-      default-src 'self';
-      script-src 'self';
+      default-src 'self' capacitor://*;
+      script-src 'self' 'unsafe-inline' capacitor://*;
       style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
       font-src 'self' https://fonts.gstatic.com;
-      connect-src 'self' https://*.supabase.co wss://*.supabase.co https://accounts.google.com;
+      connect-src 'self' capacitor://* https://*.supabase.co wss://*.supabase.co https://accounts.google.com;
       img-src 'self' data: https:;
       media-src 'self' blob:;
       object-src 'none';
       frame-src 'none';
       base-uri 'self';
       form-action 'self';
-      upgrade-insecure-requests;
     " />
 
     <!-- Prevent MIME-type sniffing -->
@@ -36,6 +37,8 @@
   </head>
 
   <body>
+    <!-- Screen capture protection -->
+    <link rel="stylesheet" href="/src/styles/screenCaptureProtection.css" />
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

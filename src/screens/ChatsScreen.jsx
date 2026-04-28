@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import {
   ChevronLeft, Phone, MoreVertical, Lock, Unlock,
   Send, Plus, Mic, CheckCheck, AlertTriangle, X, FileText
@@ -383,6 +384,10 @@ function ChatDetail({ conv, onBack }) {
     };
 
     sendMessage(conv.id, newMsg);
+    
+    // NATIVE: Trigger haptic feedback for a "premium" feel
+    Haptics.impact({ style: ImpactStyle.Medium }).catch(() => {});
+
     setMessageText('');
     setAttachment(null);
   };

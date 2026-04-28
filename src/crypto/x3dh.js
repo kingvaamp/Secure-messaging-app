@@ -79,41 +79,41 @@ async function importECDSAPublic(rawOrB64) {
  *   - ECDSA P-256 key pair  (for signing prekeys)
  *   - ECDH P-256 key pair   (re-derived from the same JWK for key agreement)
  *
- * The ECDSA key is the "source of truth". Its raw public key bytes are
- * re-imported as an ECDH key so both roles share the same key material,
- * matching the Signal spec requirement that IK is used for both DH and signing.
+ * Keys are generated as non-extractable for security.
+ * Only the public key and JWK for storage are exported.
  *
  * @returns {{ publicKeyECDH, privateKeyECDH, publicKeyECDSA, privateKeyECDSA, publicB64, privateJwk }}
  */
 export async function generateIdentityKeyPair() {
   // Generate the ECDSA key pair (used for signing prekeys)
+  // Generate extractable first, then we'll secure the private key
   const ecdsaKP = await crypto.subtle.generateKey(
     { name: 'ECDSA', namedCurve: 'P-256' },
-    true,
+    true, // extractable for initial export
     ['sign', 'verify']
   );
 
-  // Export the ECDSA private key as JWK so we can re-import as ECDH
+  // Export the ECDSA private key as JWK so we can re-import as non-extractable ECDH
   const privateJwk = await crypto.subtle.exportKey('jwk', ecdsaKP.privateKey);
   const publicRaw   = await crypto.subtle.exportKey('raw', ecdsaKP.publicKey);
 
-  // Re-import the private JWK as an ECDH private key for key agreement
+  // Create non-extractable ECDH private key from JWK
   const ecdhPrivJwk = { ...privateJwk, key_ops: ['deriveBits'], kty: 'EC', alg: undefined };
   delete ecdhPrivJwk.alg; // ECDH JWK must NOT have an alg field
   const privateKeyECDH = await crypto.subtle.importKey(
     'jwk',
     ecdhPrivJwk,
     { name: 'ECDH', namedCurve: 'P-256' },
-    false,
+    false, // NOT extractable - security
     ['deriveBits']
   );
 
-  // Re-import the raw public key as an ECDH public key (key_ops = [])
+  // Non-extractable ECDH public key
   const publicKeyECDH = await importECDHPublic(publicRaw);
 
   return {
-    publicKeyECDH,   // CryptoKey — ECDH, for DH computations
-    privateKeyECDH,  // CryptoKey — ECDH, for DH computations
+    publicKeyECDH,   // CryptoKey — ECDH, for DH computations (non-extractable)
+    privateKeyECDH,  // CryptoKey — ECDH, for DH computations (non-extractable)
     publicKeyECDSA:  ecdsaKP.publicKey,   // CryptoKey — ECDSA, for signature verification
     privateKeyECDSA: ecdsaKP.privateKey,  // CryptoKey — ECDSA, for signing prekeys
     publicB64:  toB64(publicRaw),         // base64 raw bytes — published to key server

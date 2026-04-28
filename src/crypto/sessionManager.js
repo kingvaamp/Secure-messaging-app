@@ -296,13 +296,15 @@ async function getOrCreateRatchet(conversationId, contactId, role = 'alice', ali
 
   // ── Demo mode: plain ECDH fallback ──────────────────────────────────────────
   if (__DEV_DEMO__) {
-    const myKP         = await getMyIdentityKeyPair();
+    const myKP = await getMyIdentityKeyPair();
     const contactPubB64 = await fetchContactPublicKeyDemo(contactId);
     const contactPublicKey = await importPublicKey(contactPubB64);
     const sharedBits = await ecdh(myKP.privateKeyECDH, contactPublicKey);
 
     const ratchet = new DoubleRatchet();
-    await ratchet.init(sharedBits);
+    await ratchet.initialize(sharedBits);
+    // Set our ratchet key pair for DH ratchet
+    ratchet.sendRatchetKeyPair = myKP;
     ratchets.set(conversationId, ratchet);
     return ratchet;
   }
@@ -362,8 +364,10 @@ async function getOrCreateRatchet(conversationId, contactId, role = 'alice', ali
     sessionADs.set(conversationId, ad);
 
     const ratchet = new DoubleRatchet();
-    // Pass our identity key pair as the "ephemeral key pair" seed for the DH ratchet
-    await ratchet.initAlice(sk, myKP);
+    // Initialize with shared secret (sk) - Signal spec
+    await ratchet.initialize(sk);
+    // Set our ratchet key pair for DH ratchet
+    ratchet.sendRatchetKeyPair = myKP;
     ratchets.set(conversationId, ratchet);
     return ratchet;
 
@@ -400,7 +404,10 @@ async function getOrCreateRatchet(conversationId, contactId, role = 'alice', ali
     const aliceEphemeralPublic = await importPublicKey(aliceHeader.ephemeralKey);
 
     const ratchet = new DoubleRatchet();
-    await ratchet.initBob(sk, aliceEphemeralPublic);
+    // Initialize as Bob with shared secret and Alice's ephemeral key
+    await ratchet.initialize(sk);
+    // Store Alice's ratchet key for DH ratchet
+    ratchet.recvRatchetPublicKey = aliceEphemeralPublic;
     ratchets.set(conversationId, ratchet);
     return ratchet;
   }

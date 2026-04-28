@@ -42,6 +42,11 @@ const IDB_DB_VERSION  = 1;
 const IDB_STORE_NAME  = 'wrapping_keys';
 const IDB_KEY_ID      = 'master_wrapping_key';
 
+// PBKDF2 parameters for password-based encryption
+const PBKDF2_ITERATIONS = 100000;
+const PBKDF2_SALT_BYTES = 16;
+const BACKUP_ALGORITHM = { name: 'AES-GCM', length: 256 };
+
 // ── IndexedDB helpers ─────────────────────────────────────────────────────────
 
 /**
@@ -323,8 +328,8 @@ export async function wipeAllKeys() {
   keysToRemove.forEach((key) => {
     try {
       // Overwrite with random noise before removing (best-effort memory scrub)
-      const noise = toB64(crypto.getRandomValues(new Uint8Array(64)).buffer);
-      localStorage.setItem(key, noise);
+      const noise = crypto.getRandomValues(new Uint8Array(64));
+      localStorage.setItem(key, toB64(noise.buffer));
     } catch { /* ignore write errors */ }
     localStorage.removeItem(key);
   });
@@ -508,12 +513,245 @@ export async function deleteOneTimePreKey(keyId) {
 
 /**
  * Returns the next available One-Time Pre-Key ID by incrementing a persistent counter.
+ * Uses IndexedDB for secure storage.
  * @returns {Promise<number>}
  */
 export async function getNextOPKId() {
-  const counterKey = STORAGE_PREFIX + 'opk_counter';
-  const current = parseInt(localStorage.getItem(counterKey) || '0', 10);
-  const nextId = current + 1;
-  localStorage.setItem(counterKey, nextId.toString());
+  const db = await openKeyStore();
+  const COUNTER_ID = 'opk_counter';
+  
+  let current = await idbGet(db, COUNTER_ID);
+  const nextId = (current?.value || 0) + 1;
+  
+  await idbPut(db, { id: COUNTER_ID, value: nextId });
   return nextId;
+}
+
+// ── Password-Based Key Derivation ─────────────────────────────────────────────────
+
+/**
+ * Derive an encryption key from a password using PBKDF2.
+ * @param {string} password - User password
+ * @param {Uint8Array} salt - Salt bytes
+ * @returns {Promise<CryptoKey>}
+ */
+async function deriveKeyFromPassword(password, salt) {
+  const enc = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    enc.encode(password),
+    'PBKDF2',
+    false,
+    ['deriveBits']
+  );
+  
+  const bits = await crypto.subtle.deriveBits(
+    {
+      name: 'PBKDF2',
+      salt,
+      iterations: PBKDF2_ITERATIONS,
+      hash: 'SHA-256',
+    },
+    keyMaterial,
+    256
+  );
+  
+  return crypto.subtle.importKey(
+    'raw',
+    bits,
+    BACKUP_ALGORITHM,
+    false,
+    ['encrypt', 'decrypt']
+  );
+}
+
+/**
+ * Generate random salt for PBKDF2.
+ * @returns {Uint8Array}
+ */
+function generateSalt() {
+  return crypto.getRandomValues(new Uint8Array(PBKDF2_SALT_BYTES));
+}
+
+// ── Encrypted Backup/Export ────────────────────────────────────────────────────
+
+/**
+ * Export all keys to an encrypted backup file.
+ * Requires password for protection.
+ * 
+ * @param {string} password - Password to protect backup
+ * @returns {Promise<{salt: string, iv: string, ciphertext: string}>}
+ */
+export async function exportKeyBackup(password) {
+  // Collect all key data
+  const backupData = {
+    version: 1,
+    exportedAt: Date.now(),
+    identityKey: await loadIdentityKey(),
+    spkKeys: [],
+    opkKeys: [],
+    ratchetSessions: []
+  };
+  
+  // Find all SPK keys
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key?.startsWith(STORAGE_PREFIX + SPK_PREFIX)) {
+      try {
+        const localKey = key.substring(STORAGE_PREFIX.length);
+        const data = await secureLoad(localKey);
+        if (data) backupData.spkKeys.push(data);
+      } catch {}
+    }
+  }
+  
+  // Find all OPK keys
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key?.startsWith(STORAGE_PREFIX + OPK_PREFIX)) {
+      try {
+        const localKey = key.substring(STORAGE_PREFIX.length);
+        const data = await secureLoad(localKey);
+        if (data) backupData.opkKeys.push(data);
+      } catch {}
+    }
+  }
+  
+  // Find all ratchet sessions
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key?.startsWith(STORAGE_PREFIX + RATCHET_PREFIX)) {
+      try {
+        const convId = key.replace(STORAGE_PREFIX + RATCHET_PREFIX, '');
+        const data = await loadRatchetSession(convId);
+        if (data) backupData.ratchetSessions.push({ conversationId: convId, state: data });
+      } catch {}
+    }
+  }
+  
+  // Encrypt with password-derived key
+  const salt = generateSalt();
+  const passwordKey = await deriveKeyFromPassword(password, salt);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const json = JSON.stringify(backupData);
+  
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv, tagLength: 128 },
+    passwordKey,
+    new TextEncoder().encode(json)
+  );
+  
+  return {
+    salt: toB64(salt),
+    iv: toB64(iv),
+    ciphertext: toB64(ciphertext)
+  };
+}
+
+/**
+ * Import keys from an encrypted backup file.
+ * Requires password used during export.
+ * 
+ * @param {string} password - Password used during export
+ * @param {{salt: string, iv: string, ciphertext: string}} backup
+ * @returns {Promise<boolean>}
+ */
+export async function importKeyBackup(password, backup) {
+  try {
+    const salt = new Uint8Array(fromB64(backup.salt));
+    const iv = new Uint8Array(fromB64(backup.iv));
+    const ct = fromB64(backup.ciphertext);
+    
+    const passwordKey = await deriveKeyFromPassword(password, salt);
+    
+    const decrypted = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv, tagLength: 128 },
+      passwordKey,
+      ct
+    );
+    
+    const backupData = JSON.parse(new TextDecoder().decode(decrypted));
+    
+    // Check version
+    if (backupData.version !== 1) {
+      throw new Error('Unsupported backup version');
+    }
+    
+    // Restore identity key
+    if (backupData.identityKey) {
+      await saveIdentityKey(backupData.identityKey);
+    }
+    
+    // Restore SPK keys
+    for (const spk of backupData.spkKeys || []) {
+      await saveSignedPreKey(spk);
+    }
+    
+    // Restore OPK keys
+    for (const opk of backupData.opkKeys || []) {
+      await secureStore(OPK_PREFIX + opk.keyId, opk);
+    }
+    
+    // Restore ratchet sessions
+    for (const session of backupData.ratchetSessions || []) {
+      await saveRatchetSession(session.conversationId, session.state);
+    }
+    
+    return true;
+  } catch {
+    throw new Error('Failed to import backup - wrong password or corrupted data');
+  }
+}
+
+/**
+ * Check if a backup can be decrypted with given password.
+ * Does NOT restore anything, just validates.
+ * 
+ * @param {string} password - Password to test
+ * @param {object} backup - Backup object
+ * @returns {Promise<boolean>}
+ */
+export async function validateBackupPassword(password, backup) {
+  try {
+    const salt = new Uint8Array(fromB64(backup.salt));
+    const iv = new Uint8Array(fromB64(backup.iv));
+    const ct = fromB64(backup.ciphertext);
+    
+    const passwordKey = await deriveKeyFromPassword(password, salt);
+    
+    await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv, tagLength: 128 },
+      passwordKey,
+      ct
+    );
+    
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Get backup as downloadable file blob.
+ * 
+ * @param {string} password - Password for encryption
+ * @returns {Promise<Blob>}
+ */
+export async function downloadKeyBackup(password) {
+  const backup = await exportKeyBackup(password);
+  const json = JSON.stringify(backup, null, 2);
+  return new Blob([json], { type: 'application/json' });
+}
+
+/**
+ * Import from a File object.
+ * 
+ * @param {File} file - Backup file
+ * @param {string} password - Password
+ * @returns {Promise<boolean>}
+ */
+export async function importBackupFromFile(file, password) {
+  const text = await file.text();
+  const backup = JSON.parse(text);
+  return importKeyBackup(password, backup);
 }
