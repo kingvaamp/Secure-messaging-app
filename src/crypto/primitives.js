@@ -21,11 +21,15 @@ export const fromB64 = (str) =>
 /**
  * Generate a new ECDH P-256 key pair
  * Returns: { publicKey, privateKey, publicB64, privateJwk }
+ * 
+ * NOTE: Keys are generated as extractable to allow JWK export for storage.
+ * After storage, the private key should be re-imported as non-extractable
+ * for runtime use (security best practice).
  */
 export async function generateKeyPair() {
   const kp = await crypto.subtle.generateKey(
     { name: 'ECDH', namedCurve: 'P-256' },
-    false, // NOT extractable - security best practice
+    true, // extractable - needed to export JWK for storage
     ['deriveBits']
   );
   const publicRaw = await crypto.subtle.exportKey('raw', kp.publicKey);
@@ -56,9 +60,14 @@ export async function importPublicKey(b64) {
  * Import a private key from JWK format
  */
 export async function importPrivateKey(jwk) {
+  // Clean JWK to remove problematic key_ops that might conflict with import
+  const cleanJwk = { ...jwk };
+  delete cleanJwk.key_ops;
+  delete cleanJwk.alg;
+  
   return crypto.subtle.importKey(
     'jwk',
-    jwk,
+    cleanJwk,
     { name: 'ECDH', namedCurve: 'P-256' },
     false, // not extractable
     ['deriveKey', 'deriveBits']

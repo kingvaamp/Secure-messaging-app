@@ -1,7 +1,5 @@
 import { useEffect, useCallback, useState } from 'react'
 
-const SCREENSHOT_NOTIFICATION_KEY = 'vanish_last_screenshot'
-
 interface ScreenCaptureOptions {
   onScreenshot?: () => void
 }

@@ -386,7 +386,12 @@ export async function loadSignedPreKey(keyId) {
     ['deriveBits']
   );
 
-  return { keyId: stored.keyId, privateKey, privateJwk: stored.privateJwk };
+  return { 
+    keyId: stored.keyId, 
+    privateKey, 
+    privateJwk: stored.privateJwk,
+    graceExpiresAt: stored.graceExpiresAt
+  };
 }
 
 /**
@@ -754,4 +759,21 @@ export async function importBackupFromFile(file, password) {
   const text = await file.text();
   const backup = JSON.parse(text);
   return importKeyBackup(password, backup);
+}
+
+/**
+ * Get (or generate) a persistent secret for the Message DB.
+ * This secret is itself protected by the two-layer envelope encryption.
+ */
+export async function getMessageDBSecret() {
+  const SECRET_KEY = 'message_db_secret';
+  let stored = await secureLoad(SECRET_KEY);
+  
+  if (!stored) {
+    const bytes = crypto.getRandomValues(new Uint8Array(32));
+    stored = { secretB64: toB64(bytes) };
+    await secureStore(SECRET_KEY, stored);
+  }
+  
+  return fromB64(stored.secretB64);
 }

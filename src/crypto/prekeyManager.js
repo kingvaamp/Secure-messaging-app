@@ -115,6 +115,7 @@ async function checkAndRotateSPK(userId, identityKeyPair) {
   console.log(`[PrekeyManager] SPK rotated successfully (old id: ${spkMeta.keyId}, new id: ${newKeyId}).`);
 
   // 6. Schedule deletion of the old SPK private key after grace period
+  // This is volatile (lost on close), so we also have a persistent check in runPrekeyMaintenance
   setTimeout(async () => {
     await keyStorage.deleteExpiredSPK(spkMeta.keyId);
     console.log(`[PrekeyManager] Old SPK (id: ${spkMeta.keyId}) deleted after grace period.`);
@@ -122,10 +123,41 @@ async function checkAndRotateSPK(userId, identityKeyPair) {
 }
 
 /**
+ * Scan for and delete any SPKs whose grace period has expired.
+ * This handles the case where the app was closed during the SPK_GRACE_PERIOD.
+ */
+async function cleanupExpiredSPKs() {
+  const allKeys = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key && key.startsWith('vanish_spk_')) {
+      const keyId = parseInt(key.replace('vanish_spk_', ''));
+      if (!isNaN(keyId)) allKeys.push(keyId);
+    }
+  }
+
+  for (const kid of allKeys) {
+    try {
+      // loadSignedPreKey doesn't return grace data, so we use a custom check or secureLoad
+      // For simplicity, we'll check if it's NOT the latest one and if it has expired
+      const spk = await keyStorage.loadSignedPreKey(kid);
+      if (spk && spk.graceExpiresAt && Date.now() > spk.graceExpiresAt) {
+        await keyStorage.deleteExpiredSPK(kid);
+        console.log(`[PrekeyManager] Cleaned up expired SPK: ${kid}`);
+      }
+    } catch (e) {}
+  }
+}
+
+/**
  * Main entry point: Calls both checks in sequence.
  */
 export async function runPrekeyMaintenance(userId, identityKeyPair) {
   try {
+    // 1. Cleanup any keys that expired while the app was closed
+    await cleanupExpiredSPKs();
+    
+    // 2. Standard maintenance
     await checkAndReplenishOPKs(userId, identityKeyPair);
     await checkAndRotateSPK(userId, identityKeyPair);
   } catch (err) {

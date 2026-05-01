@@ -9,7 +9,9 @@ const key = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 // Guard: fail fast if env vars are missing
 if (!url || !key) {
-  console.warn('Supabase env vars missing — running in demo mode');
+  console.warn('[Supabase] Env vars missing — fallback to localhost');
+} else {
+  console.log('[Supabase] Client initialized for:', url);
 }
 
 export const supabase = createClient(url || 'http://localhost', key || 'demo-key', {
@@ -19,8 +21,3 @@ export const supabase = createClient(url || 'http://localhost', key || 'demo-key
     detectSessionInUrl: true,
   },
 });
-
-// Helper: check if we're in demo mode (no real Supabase connection)
-export function isDemoMode() {
-  return !url || !key || url === 'http://localhost';
-}

@@ -3,7 +3,7 @@
 // In production, the entire component returns null and tree-shakes out.
 
 export function DemoBanner() {
-  if (!__DEV_DEMO__) return null;
+  return null; // Production mode — never show banner
 
   return (
     <div

@@ -4,6 +4,8 @@ import {
   UserPlus, Check, Shield, ShieldCheck, Ban
 } from 'lucide-react';
 import { useApp } from '@/context/AppContext';
+import { useWebRTC } from '@/context/WebRTCContext';
+import { supabase } from '@/lib/supabase';
 import Av from '@/components/Av';
 import { computeSafetyNumber } from '@/crypto/safetyNumber';
 import { getMyPublicB64, getContactPublicB64 } from '@/crypto/sessionManager';
@@ -34,7 +36,7 @@ function ContactSheet({ contact, onClose, onMessage, onCall }) {
   return (
     <div className="absolute inset-0 z-[60] flex flex-col" style={{ backgroundColor: '#050000' }}>
       {/* Header */}
-      <div className="flex items-center px-4 py-3" style={{ borderBottom: '1px solid rgba(255,0,60,0.08)' }}>
+      <div className="flex items-center px-4 pt-12 pb-5" style={{ borderBottom: '1px solid rgba(255,0,60,0.08)' }}>
         <button onClick={onClose} className="text-white/60 hover:text-white transition-colors">
           <ChevronLeft size={24} />
         </button>
@@ -133,61 +135,126 @@ function ContactSheet({ contact, onClose, onMessage, onCall }) {
 }
 
 // ============================================
-// Add Contact Modal
+// ============================================
+// Add Contact Modal (Premium Redesign)
 // ============================================
 function AddContactModal({ onClose, onSave }) {
-  const [name, setName] = useState('');
-  const [phone, setPhone] = useState('');
+  const [pseudoSearch, setPseudoSearch] = useState('');
+  const [foundProfile, setFoundProfile] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSearch = async () => {
+    const clean = pseudoSearch.toLowerCase().replace(/[^a-z0-9_]/g, '');
+    if (!clean || clean.length < 3) {
+      setError('Entrez un pseudo d\'au moins 3 caractères');
+      return;
+    }
+    
+    setLoading(true);
+    setError('');
+    setFoundProfile(null);
+    
+    try {
+      const { data, error: sbError } = await supabase
+        .from('profiles')
+        .select('id, name, pseudo, phone')
+        .eq('pseudo', clean)
+        .maybeSingle();
+      
+      if (!sbError && data) {
+        setFoundProfile(data);
+        setLoading(false);
+        return;
+      }
+    } catch (err) {
+      console.error('Search error:', err);
+      setError('Erreur de recherche. Veuillez réessayer.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleSave = () => {
-    if (!name.trim() || !phone.trim()) return;
-    onSave({ name: name.trim(), phone: phone.trim() });
+    if (!foundProfile) return;
+    onSave({ 
+      id: foundProfile.id,
+      name: foundProfile.name, 
+      phone: foundProfile.pseudo, 
+    });
     onClose();
   };
 
   return (
-    <div className="absolute inset-0 z-[60] flex flex-col" style={{ backgroundColor: '#050000' }}>
-      <div className="flex items-center px-4 py-3" style={{ borderBottom: '1px solid rgba(255,0,60,0.08)' }}>
-        <button onClick={onClose} className="text-white/60 hover:text-white transition-colors">
+    <div className="absolute inset-0 z-[60] flex flex-col animate-in fade-in zoom-in-95 duration-200">
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-3xl" />
+      
+      <div 
+        className="relative flex items-center px-4 py-3 z-10" 
+        style={{ borderBottom: '1px solid rgba(255,0,60,0.15)', backgroundColor: 'rgba(10, 0, 5, 0.6)' }}
+      >
+        <button onClick={onClose} className="p-2 -ml-2 text-white/60 hover:text-white transition-colors active:scale-90">
           <ChevronLeft size={24} />
         </button>
-        <h2 className="flex-1 text-center text-[15px] font-medium text-white pr-8">Nouveau contact</h2>
+        <h2 className="flex-1 text-center text-[17px] font-semibold text-white pr-8">Ajouter un contact</h2>
       </div>
 
-      <div className="flex-1 px-4 pt-6 space-y-5">
-        <div>
-          <label className="text-[11px] uppercase tracking-wider mb-2 block" style={{ color: 'rgba(255,255,255,0.4)' }}>
-            Nom
+      <div className="relative flex-1 px-4 pt-8 space-y-6 z-10">
+        <div className="animate-in slide-in-from-bottom-4 duration-500">
+          <label className="text-[10px] uppercase font-bold tracking-[0.15em] mb-3 ml-1 block" style={{ color: 'rgba(255,255,255,0.4)' }}>
+            Pseudo de l'utilisateur
           </label>
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Prénom Nom"
-            className="w-full bg-white/5 rounded-xl px-4 py-3 text-[15px] text-white placeholder:text-white/20 outline-none"
-          />
+          <div className="flex gap-3">
+            <div className="relative flex-1 group">
+              <span className="absolute left-4 top-3.5 text-[#ff003c] font-bold opacity-50 group-focus-within:opacity-100 transition-opacity">@</span>
+              <input
+                value={pseudoSearch}
+                onChange={(e) => setPseudoSearch(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ''))}
+                onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                placeholder="pseudo"
+                className="w-full bg-white/5 rounded-2xl pl-9 pr-4 py-3.5 text-[15px] text-white placeholder:text-white/20 outline-none transition-all focus:bg-white/[0.08]"
+                style={{ border: '1px solid rgba(255,0,60,0.1)' }}
+              />
+            </div>
+            <button
+              onClick={handleSearch}
+              disabled={loading || pseudoSearch.length < 3}
+              className="px-5 py-3 rounded-2xl text-[13px] font-bold uppercase tracking-wider text-white transition-all disabled:opacity-30 flex items-center justify-center min-w-[110px] gap-2 active:scale-95"
+              style={{ 
+                backgroundColor: 'rgba(255,0,60,0.15)', 
+                border: '1px solid rgba(255,0,60,0.3)', 
+                color: '#ff003c',
+              }}
+            >
+              {loading ? <div className="w-4 h-4 border-2 border-[#ff003c]/30 border-t-[#ff003c] rounded-full animate-spin" /> : <Search size={16} />}
+              <span>Chercher</span>
+            </button>
+          </div>
+          {error && <p className="text-[13px] font-medium mt-3 text-center" style={{ color: '#ff003c' }}>{error}</p>}
         </div>
 
-        <div>
-          <label className="text-[11px] uppercase tracking-wider mb-2 block" style={{ color: 'rgba(255,255,255,0.4)' }}>
-            Téléphone
-          </label>
-          <input
-            value={phone}
-            onChange={(e) => setPhone(e.target.value)}
-            placeholder="+221 77 000 0000"
-            type="tel"
-            className="w-full bg-white/5 rounded-xl px-4 py-3 text-[15px] text-white placeholder:text-white/20 outline-none"
-          />
-        </div>
-
-        <button
-          onClick={handleSave}
-          disabled={!name.trim() || !phone.trim()}
-          className="w-full py-3 rounded-xl text-sm font-medium text-white transition-all disabled:opacity-30"
-          style={{ backgroundColor: '#ff003c' }}
-        >
-          Enregistrer le contact
-        </button>
+        {foundProfile && (
+          <div 
+            className="mt-4 p-6 rounded-[28px] flex flex-col items-center animate-in zoom-in-95 duration-500" 
+            style={{ 
+              backgroundColor: 'rgba(255,255,255,0.03)', 
+              border: '1px solid rgba(255,255,255,0.08)',
+              backdropFilter: 'blur(20px)'
+            }}
+          >
+            <Av name={foundProfile.name} size={84} />
+            <h3 className="text-xl font-bold text-white tracking-tight mt-4">{foundProfile.name}</h3>
+            <p className="text-[14px] font-medium mt-1" style={{ color: '#ff003c' }}>@{foundProfile.pseudo}</p>
+            
+            <button
+              onClick={handleSave}
+              className="w-full mt-8 py-3.5 rounded-2xl text-[14px] font-bold uppercase tracking-widest text-white transition-all active:scale-95"
+              style={{ backgroundColor: '#ff003c', boxShadow: '0 8px 32px rgba(255, 0, 60, 0.4)' }}
+            >
+              Ajouter aux contacts
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -197,7 +264,17 @@ function AddContactModal({ onClose, onSave }) {
 // Main Contacts Screen
 // ============================================
 export default function ContactsScreen() {
-  const { contacts, contactsFilter, setContactsFilter, addContact, setActiveChat, setTab, startCall } = useApp();
+  const { 
+    contacts, 
+    conversations, 
+    contactsFilter, 
+    setContactsFilter, 
+    addContact, 
+    setActiveChat, 
+    setTab,
+    createConversation 
+  } = useApp();
+  const { initiateCall } = useWebRTC();
   const [selectedContact, setSelectedContact] = useState(null);
   const [showAddContact, setShowAddContact] = useState(false);
 
@@ -220,13 +297,19 @@ export default function ContactsScreen() {
 
   const handleMessage = (contact) => {
     setSelectedContact(null);
+    const existing = conversations.find((c) => c.contactId === contact.id);
+    if (existing) {
+      setActiveChat(existing.id);
+    } else {
+      const newId = createConversation(contact.id);
+      setActiveChat(newId);
+    }
     setTab('chats');
-    // Find or create conversation would go here
   };
 
   const handleCall = (contact) => {
     setSelectedContact(null);
-    startCall({ name: contact.name, contactId: contact.id });
+    initiateCall(contact.id);
   };
 
   if (selectedContact) {

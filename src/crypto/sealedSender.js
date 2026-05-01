@@ -50,7 +50,7 @@ export async function generateAnonymousSenderKey() {
  * @returns {Promise<{anonymousPublicB64, ciphertext, iv}>}
  */
 export async function createSealedMessage(
-  senderAnonymousPrivate,
+  senderAnonymousKeyPair,
   recipientIdentityB64,
   plainText
 ) {
@@ -59,7 +59,7 @@ export async function createSealedMessage(
   
   // Compute DH with anonymous key + recipient identity
   // This is different per message (fresh anonymous key)
-  const sharedSecret = await ecdh(senderAnonymousPrivate, recipientPublic);
+  const sharedSecret = await ecdh(senderAnonymousKeyPair.privateKey, recipientPublic);
   
   // Derive message key from shared secret
   const messageKey = await hkdf(
@@ -79,7 +79,7 @@ export async function createSealedMessage(
   );
   
   return {
-    anonymousPublicB64: toB64(await crypto.subtle.exportKey('raw', senderAnonymousPrivate)),
+    anonymousPublicB64: senderAnonymousKeyPair.publicB64,
     iv: toB64(iv),
     ciphertext: toB64(ct)
   };

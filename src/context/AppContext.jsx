@@ -1,8 +1,21 @@
-import React, { createContext, useContext, useReducer, useCallback } from 'react';
-import { DEFAULT_SECURITY_SETTINGS } from '@/data/demoData';
-import { useDemoData } from '@/data/useDemoData';
+import React, { createContext, useContext, useReducer, useCallback, useEffect } from 'react';
+import { 
+  saveMessage, 
+  loadConversationMessages, 
+  deleteMessage as deleteMessageFromDB,
+  wipeAllMessages 
+} from '@/crypto/messageDB';
 
 const AppContext = createContext(null);
+
+// Security defaults
+const DEFAULT_SECURITY_SETTINGS = {
+  blockScreenshots: true,
+  readReceipts: true,
+  faceIdLock: false,
+  screenshotAlerts: true,
+  notificationSounds: true,
+};
 
 // ============================================
 // Actions
@@ -14,15 +27,16 @@ export const ACTIONS = {
   SEND_MESSAGE: 'SEND_MESSAGE',
   DECRYPT_MESSAGE: 'DECRYPT_MESSAGE',
   DELETE_MESSAGE: 'DELETE_MESSAGE',
-  START_CALL: 'START_CALL',
-  END_CALL: 'END_CALL',
   ADD_NOTIFICATION: 'ADD_NOTIFICATION',
   DISMISS_NOTIFICATION: 'DISMISS_NOTIFICATION',
-  TOGGLE_USER: 'TOGGLE_USER',
   UPDATE_SECURITY: 'UPDATE_SECURITY',
   ADD_CONTACT: 'ADD_CONTACT',
   SET_CONTACTS_FILTER: 'SET_CONTACTS_FILTER',
   UPDATE_CURRENT_USER: 'UPDATE_CURRENT_USER',
+  WIPE_LOCAL_DATA: 'WIPE_LOCAL_DATA',
+  CREATE_CONVERSATION: 'CREATE_CONVERSATION',
+  SET_LOADING_PROFILE: 'SET_LOADING_PROFILE',
+  ADD_CALL_LOG: 'ADD_CALL_LOG',
 };
 
 // ============================================
@@ -30,17 +44,33 @@ export const ACTIONS = {
 // ============================================
 function appReducer(state, action) {
   switch (action.type) {
-    case ACTIONS.SET_TAB:
-      return { ...state, activeTab: action.payload, activeChatId: null };
+    case ACTIONS.SET_LOADING_PROFILE:
+      return { ...state, loadingProfile: action.payload };
 
-    case ACTIONS.SET_ACTIVE_CHAT:
-      return { ...state, activeChatId: action.payload };
+    case ACTIONS.SET_TAB:
+      return { ...state, activeTab: action.payload };
+
+    case ACTIONS.SET_ACTIVE_CHAT: {
+      const convId = action.payload;
+      return { ...state, activeChatId: convId };
+    }
 
     case ACTIONS.CLOSE_CHAT:
       return { ...state, activeChatId: null };
 
     case ACTIONS.SEND_MESSAGE: {
       const { convId, message } = action.payload;
+      saveMessage({
+        id: message.id,
+        conversationId: convId,
+        text: message.text,
+        senderId: message.senderId,
+        timestamp: message.time,
+        type: message.type,
+        attachment: message.attachment,
+        status: 'sent'
+      }).catch(err => console.warn('Failed to persist message:', err));
+      
       const conversations = state.conversations.map((c) => {
         if (c.id !== convId) return c;
         return {
@@ -71,6 +101,8 @@ function appReducer(state, action) {
 
     case ACTIONS.DELETE_MESSAGE: {
       const { convId, msgId } = action.payload;
+      deleteMessageFromDB(msgId).catch(err => console.warn('Failed to delete message:', err));
+      
       const conversations = state.conversations.map((c) => {
         if (c.id !== convId) return c;
         return {
@@ -81,16 +113,9 @@ function appReducer(state, action) {
       return { ...state, conversations };
     }
 
-    case ACTIONS.START_CALL:
-      return { ...state, activeCall: action.payload };
-
-    case ACTIONS.END_CALL:
-      return { ...state, activeCall: null };
-
     case ACTIONS.ADD_NOTIFICATION:
       return {
         ...state,
-        // Cryptographically random ID — not predictable like Date.now()
         notifications: [...state.notifications, {
           id: Array.from(crypto.getRandomValues(new Uint8Array(8)), b => b.toString(16).padStart(2, '0')).join(''),
           ...action.payload,
@@ -101,15 +126,6 @@ function appReducer(state, action) {
       return {
         ...state,
         notifications: state.notifications.filter((n) => n.id !== action.payload),
-      };
-
-    case ACTIONS.TOGGLE_USER:
-      // demoUserBob is null in production (no demo data) — fall back to current user
-      return {
-        ...state,
-        currentUser: state._demoUserBob
-          ? (state.currentUser.id === 'demo-alice' ? state._demoUserBob : state._demoUser)
-          : state.currentUser,
       };
 
     case ACTIONS.UPDATE_SECURITY:
@@ -127,6 +143,21 @@ function appReducer(state, action) {
     case ACTIONS.SET_CONTACTS_FILTER:
       return { ...state, contactsFilter: action.payload };
 
+    case 'MERGE_PERSISTED_MESSAGES': {
+      const { convId, messages } = action.payload;
+      const conversations = state.conversations.map((c) => {
+        if (c.id !== convId) return c;
+        const existingIds = new Set(c.messages.map(m => m.id));
+        const newMessages = messages.filter(m => !existingIds.has(m.id));
+        if (newMessages.length === 0) return c;
+        return {
+          ...c,
+          messages: [...c.messages, ...newMessages].sort((a, b) => a.time - b.time)
+        };
+      });
+      return { ...state, conversations };
+    }
+
     case ACTIONS.UPDATE_CURRENT_USER:
       return {
         ...state,
@@ -142,11 +173,11 @@ function appReducer(state, action) {
           if (m.expiresAt && now >= m.expiresAt) {
             convChanged = true;
             changed = true;
+            deleteMessageFromDB(m.id).catch(() => {});
             return false;
           }
           return true;
         });
-
         if (convChanged) {
           const lastMsg = messages[messages.length - 1];
           return {
@@ -157,9 +188,32 @@ function appReducer(state, action) {
         }
         return c;
       });
-
       return changed ? { ...state, conversations } : state;
     }
+
+    case ACTIONS.CREATE_CONVERSATION: {
+      const { id, contactId } = action.payload;
+      const newConv = {
+        id,
+        contactId,
+        messages: [],
+        lastMessage: 'Démarrer une conversation sécurisée',
+        timestamp: 'Maintenant',
+        unreadCount: 0,
+      };
+      return {
+        ...state,
+        conversations: [newConv, ...state.conversations],
+      };
+    }
+
+    case ACTIONS.ADD_CALL_LOG: {
+      const newCalls = [action.payload, ...state.calls];
+      return { ...state, calls: newCalls };
+    }
+
+    case ACTIONS.WIPE_LOCAL_DATA:
+      return { ...state, calls: [], conversations: state.conversations.map(c => ({...c, messages: []})) };
 
     default:
       return state;
@@ -167,22 +221,25 @@ function appReducer(state, action) {
 }
 
 // ============================================
-// Initial State — built at runtime via useDemoData() gate
+// Initial State — Production (no demo data)
 // ============================================
-function buildInitialState(demoData) {
+function buildInitialState() {
+  const savedContacts = localStorage.getItem('vanish_contacts');
+  const savedSecurity = localStorage.getItem('vanish_security');
+  const savedConvs = localStorage.getItem('vanish_conversations');
+  const savedCalls = localStorage.getItem('vanish_calls');
+  
   return {
     activeTab: 'chats',
     activeChatId: null,
-    activeCall: null,
     notifications: [],
-    contacts:         demoData.contacts,
-    conversations:    demoData.conversations,
-    calls:            demoData.calls,
-    currentUser:      demoData.currentUser,
-    _demoUser:        demoData.currentUser,      // kept for TOGGLE_USER
-    _demoUserBob:     demoData.currentUserBob,   // kept for TOGGLE_USER
-    securitySettings: demoData.securitySettings,
-    stats:            demoData.stats,
+    loadingProfile: true,
+    contacts: savedContacts ? JSON.parse(savedContacts) : [],
+    conversations: savedConvs ? JSON.parse(savedConvs) : [],
+    calls: savedCalls ? JSON.parse(savedCalls) : [],
+    currentUser: { id: null, name: 'Chargement...', phone: '', pseudo: '' },
+    securitySettings: savedSecurity ? JSON.parse(savedSecurity) : DEFAULT_SECURITY_SETTINGS,
+    stats: { messages: 0, chats: 0, calls: 0 },
     contactsFilter: '',
   };
 }
@@ -191,14 +248,91 @@ function buildInitialState(demoData) {
 // Provider
 // ============================================
 export function AppProvider({ children }) {
-  const demoData = useDemoData();
-  const [state, dispatch] = useReducer(appReducer, undefined, () => buildInitialState(demoData));
+  const [state, dispatch] = useReducer(appReducer, undefined, buildInitialState);
 
-  React.useEffect(() => {
+  // Persist contacts
+  useEffect(() => {
+    localStorage.setItem('vanish_contacts', JSON.stringify(state.contacts));
+  }, [state.contacts]);
+
+  // Persist conversations (without messages)
+  useEffect(() => {
+    const convsToSave = state.conversations.map(c => ({ ...c, messages: [] }));
+    localStorage.setItem('vanish_conversations', JSON.stringify(convsToSave));
+  }, [state.conversations]);
+
+  // Persist security settings
+  useEffect(() => {
+    localStorage.setItem('vanish_security', JSON.stringify(state.securitySettings));
+  }, [state.securitySettings]);
+
+  // Persist calls
+  useEffect(() => {
+    localStorage.setItem('vanish_calls', JSON.stringify(state.calls));
+  }, [state.calls]);
+
+  // TTL countdown
+  useEffect(() => {
     const interval = setInterval(() => {
       dispatch({ type: 'TICK_TTL' });
     }, 1000);
     return () => clearInterval(interval);
+  }, []);
+
+  // ============================================
+  // Global Profile Fetch & Sync
+  // ============================================
+  // We listen to the session in a safe way to avoid circular dependencies
+  // with AuthContext while still reacting to login/logout.
+  useEffect(() => {
+    let mounted = true;
+    
+    async function fetchMyProfile(uid) {
+      try {
+        const { data } = await import('@/lib/supabase').then(m => 
+          m.supabase.from('profiles').select('*').eq('id', uid).maybeSingle()
+        );
+        
+        if (mounted) {
+          if (data) {
+            dispatch({ type: ACTIONS.UPDATE_CURRENT_USER, payload: data });
+          }
+          dispatch({ type: ACTIONS.SET_LOADING_PROFILE, payload: false });
+        }
+      } catch (err) {
+        if (mounted) dispatch({ type: ACTIONS.SET_LOADING_PROFILE, payload: false });
+      }
+    }
+
+    // Direct access to supabase to avoid context circularity
+    import('@/lib/supabase').then(m => {
+      // 1. Initial check
+      m.supabase.auth.getSession().then(({ data: { session } }) => {
+        if (session?.user) {
+          if (mounted) fetchMyProfile(session.user.id);
+        } else {
+          if (mounted) dispatch({ type: ACTIONS.SET_LOADING_PROFILE, payload: false });
+        }
+      });
+
+      // 2. Continuous listen
+      const { data: { subscription } } = m.supabase.auth.onAuthStateChange((_event, session) => {
+        if (session?.user) {
+          if (mounted) fetchMyProfile(session.user.id);
+        } else if (mounted) {
+          // Clear current user on logout
+          dispatch({ type: ACTIONS.UPDATE_CURRENT_USER, payload: { id: null, pseudo: '', name: 'Alice' } });
+          dispatch({ type: ACTIONS.SET_LOADING_PROFILE, payload: false });
+        }
+      });
+
+      return () => {
+        mounted = false;
+        subscription.unsubscribe();
+      };
+    });
+
+    return () => { mounted = false; };
   }, []);
 
   const setTab = useCallback((tab) => dispatch({ type: ACTIONS.SET_TAB, payload: tab }), []);
@@ -207,15 +341,33 @@ export function AppProvider({ children }) {
   const sendMessage = useCallback((convId, message) => dispatch({ type: ACTIONS.SEND_MESSAGE, payload: { convId, message } }), []);
   const decryptMessage = useCallback((convId, msgId, payloadData) => dispatch({ type: ACTIONS.DECRYPT_MESSAGE, payload: { convId, msgId, payloadData } }), []);
   const deleteMessage = useCallback((convId, msgId) => dispatch({ type: ACTIONS.DELETE_MESSAGE, payload: { convId, msgId } }), []);
-  const startCall = useCallback((call) => dispatch({ type: ACTIONS.START_CALL, payload: call }), []);
-  const endCall = useCallback(() => dispatch({ type: ACTIONS.END_CALL }), []);
   const addNotification = useCallback((notif) => dispatch({ type: ACTIONS.ADD_NOTIFICATION, payload: notif }), []);
   const dismissNotification = useCallback((id) => dispatch({ type: ACTIONS.DISMISS_NOTIFICATION, payload: id }), []);
-  const toggleUser = useCallback(() => dispatch({ type: ACTIONS.TOGGLE_USER }), []);
   const updateSecurity = useCallback((settings) => dispatch({ type: ACTIONS.UPDATE_SECURITY, payload: settings }), []);
   const addContact = useCallback((contact) => dispatch({ type: ACTIONS.ADD_CONTACT, payload: contact }), []);
   const setContactsFilter = useCallback((filter) => dispatch({ type: ACTIONS.SET_CONTACTS_FILTER, payload: filter }), []);
   const updateCurrentUser = useCallback((updates) => dispatch({ type: ACTIONS.UPDATE_CURRENT_USER, payload: updates }), []);
+  
+  const wipeLocalData = useCallback(async () => {
+    await wipeAllMessages();
+    dispatch({ type: ACTIONS.WIPE_LOCAL_DATA });
+  }, []);
+
+  const addCallLog = useCallback((log) => {
+    dispatch({ type: ACTIONS.ADD_CALL_LOG, payload: {
+      id: `call-${Date.now()}`,
+      ...log
+    }});
+  }, []);
+
+  const createConversation = useCallback((contactId) => {
+    const id = `conv-${Date.now()}`;
+    dispatch({ 
+      type: ACTIONS.CREATE_CONVERSATION, 
+      payload: { id, contactId } 
+    });
+    return id; // return the ID so the caller can setActiveChat(id)
+  }, []);
 
   const value = {
     ...state,
@@ -225,15 +377,15 @@ export function AppProvider({ children }) {
     sendMessage,
     decryptMessage,
     deleteMessage,
-    startCall,
-    endCall,
     addNotification,
     dismissNotification,
-    toggleUser,
     updateSecurity,
     addContact,
     setContactsFilter,
     updateCurrentUser,
+    wipeLocalData,
+    addCallLog,
+    createConversation,
   };
 
   return (

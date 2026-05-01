@@ -8,7 +8,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { Shield, Fingerprint, Lock } from 'lucide-react';
 import { useApp } from '@/context/AppContext';
 import { useAuth } from '@/context/AuthContext';
-import { supabase, isDemoMode } from '@/lib/supabase';
+import { supabase } from '@/lib/supabase';
 import { toB64, fromB64 } from '@/crypto/primitives';
 
 // ============================================
@@ -16,26 +16,6 @@ import { toB64, fromB64 } from '@/crypto/primitives';
 // Uses platform authenticator (Touch ID / Face ID / Windows Hello)
 // ============================================
 async function requestBiometricAuth(supabaseSession) {
-  if (isDemoMode()) {
-    console.log('[WebAuthn] Demo mode fallback: using local challenge');
-    if (!window.PublicKeyCredential) return false;
-    const challenge = crypto.getRandomValues(new Uint8Array(32));
-    try {
-      await navigator.credentials.get({
-        publicKey: {
-          challenge,
-          rpId: window.location.hostname,
-          userVerification: 'required',
-          timeout: 30000,
-          allowCredentials: [],
-        },
-      });
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
   if (!window.PublicKeyCredential) throw new Error('WebAuthn not supported');
 
   // 1. Request server-issued challenge
@@ -144,13 +124,8 @@ function BiometricLockScreen({ session, onUnlock, onBypass }) {
         }
       }
     } catch (e) {
-      if (isDemoMode()) {
-        setError('Mode démo — authentification locale ignorée.');
-        setTimeout(onUnlock, 1500);
-      } else {
-        setError('Face ID / Touch ID non disponible ou erreur serveur.');
-        setTimeout(onBypass, 2000);
-      }
+      setError('Face ID / Touch ID non disponible ou erreur serveur.');
+      setTimeout(onBypass, 2000);
     }
     setLoading(false);
   };

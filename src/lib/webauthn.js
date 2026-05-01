@@ -1,4 +1,4 @@
-import { supabase, isDemoMode } from '@/lib/supabase';
+import { supabase } from '@/lib/supabase';
 import { toB64, fromB64 } from '@/crypto/primitives';
 
 /**
@@ -10,11 +10,6 @@ import { toB64, fromB64 } from '@/crypto/primitives';
  * 3. Send attestation to server for verification and storage
  */
 export async function registerBiometric(session) {
-  if (isDemoMode()) {
-    console.log('[WebAuthn] Demo mode: skipping server credential registration');
-    return true; // Graceful fallback
-  }
-
   if (!window.PublicKeyCredential) {
     throw new Error('WebAuthn non supporté sur ce navigateur');
   }

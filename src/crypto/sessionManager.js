@@ -32,15 +32,15 @@
  */
 
 // ============================================
-// Session Manager — Full X3DH + Double Ratchet
+// Session Manager  Full X3DH + Double Ratchet
 // Phase 4: Signal Protocol-grade session establishment
 //
 // Architecture (production path, __DEV_DEMO__ === false):
 //   1. On login, generate (or load) a full X3DH identity key pair.
 //   2. Generate an X3DH bundle (SPK + 20 OPKs) and publish to Supabase.
 //   3. On first message to a contact:
-//        Alice: fetch Bob's bundle → x3dhInitiate() → ratchet.initAlice()
-//        Bob  : x3dhRespond() on first received message → ratchet.initBob()
+//        Alice: fetch Bob's bundle  x3dhInitiate()  ratchet.initAlice()
+//        Bob  : x3dhRespond() on first received message  ratchet.initBob()
 //   4. All subsequent messages use the Double Ratchet chains.
 //
 // Demo path (__DEV_DEMO__ === true):
@@ -64,10 +64,13 @@ import {
   loadSignedPreKey,
   loadOneTimePreKey,
   deleteOneTimePreKey,
+  saveRatchetSession,
+  loadRatchetSession,
+  hasRatchetSession,
 } from './keyStorage';
 import { supabase } from '@/lib/supabase';
 
-// ── In-memory state (cleared on sign-out) ────────────────────────────────────
+//  In-memory state (cleared on sign-out) 
 
 /**
  * The current user's X3DH identity key pair.
@@ -81,11 +84,11 @@ let myIdentityKeyPair = null;
  */
 const demoContactKeyPairs = new Map();
 
-/** Per-conversation Double Ratchet instances: conversationId → DoubleRatchet */
+/** Per-conversation Double Ratchet instances: conversationId  DoubleRatchet */
 const ratchets = new Map();
 
 /**
- * Per-conversation X3DH associated data (AD): conversationId → Uint8Array.
+ * Per-conversation X3DH associated data (AD): conversationId  Uint8Array.
  * Used for AEAD binding; stored in memory only.
  */
 const sessionADs = new Map();
@@ -93,11 +96,49 @@ const sessionADs = new Map();
 /**
  * Per-conversation ephemeral public key sent in the first message header.
  * Stored so encryptMessage() can attach it to the first outbound message.
- * conversationId → base64 string
+ * conversationId  base64 string
  */
 const pendingEphemeralKeys = new Map();
 
-// ── Identity Key Management ──────────────────────────────────────────────────
+/**
+ * Persist a ratchet session to encrypted storage.
+ */
+async function saveSessionState(conversationId, ratchet) {
+  if (!ratchet.initialized) return;
+  const state = await ratchet.serialize();
+  // Also store the AD if we have it
+  if (sessionADs.has(conversationId)) {
+    state.ad = toB64(sessionADs.get(conversationId));
+  }
+  // Store pending X3DH header info if present
+  if (pendingEphemeralKeys.has(conversationId)) {
+    state.pendingX3DH = pendingEphemeralKeys.get(conversationId);
+  }
+  await saveRatchetSession(conversationId, state);
+}
+
+/**
+ * Load and restore a ratchet session from storage.
+ */
+async function loadSessionState(conversationId) {
+  const state = await loadRatchetSession(conversationId);
+  if (!state) return null;
+
+  const ratchet = new DoubleRatchet();
+  await ratchet.restore(state);
+  
+  if (state.ad) {
+    sessionADs.set(conversationId, new Uint8Array(fromB64(state.ad)));
+  }
+  if (state.pendingX3DH) {
+    pendingEphemeralKeys.set(conversationId, state.pendingX3DH);
+  }
+  
+  ratchets.set(conversationId, ratchet);
+  return ratchet;
+}
+
+//  Identity Key Management 
 
 /**
  * Get (or lazily generate) the current user's X3DH identity key pair.
@@ -108,7 +149,7 @@ const pendingEphemeralKeys = new Map();
  *   3. If not found, generate a new X3DH identity key pair and save it.
  *
  * Demo path:
- *   Same logic, but failures are non-fatal — a fresh ephemeral pair is
+ *   Same logic, but failures are non-fatal  a fresh ephemeral pair is
  *   generated each session (matches previous plain-ECDH demo behaviour).
  *
  * @returns {Promise<{
@@ -173,7 +214,7 @@ export async function getMyIdentityKeyPair() {
       };
       return myIdentityKeyPair;
     } catch {
-      // Fall through — generate a fresh pair below
+      // Fall through  generate a fresh pair below
     }
   }
 
@@ -187,7 +228,7 @@ export async function getMyIdentityKeyPair() {
   return myIdentityKeyPair;
 }
 
-// ── Demo-mode helpers (plain ECDH fallback) ──────────────────────────────────
+//  Demo-mode helpers (plain ECDH fallback) 
 
 /**
  * [DEMO ONLY] Fetch a contact's public key from Supabase user_keys table,
@@ -212,7 +253,7 @@ async function fetchContactPublicKeyDemo(contactId) {
   return demoContactKeyPairs.get(contactId).publicB64;
 }
 
-// ── Key Server Integration (Supabase) ────────────────────────────────────────
+//  Key Server Integration (Supabase) 
 
 /**
  * Publish a complete X3DH prekey bundle to Supabase.
@@ -225,20 +266,9 @@ async function fetchContactPublicKeyDemo(contactId) {
  *
  * Also publishes the raw identity public key to user_keys (legacy compat).
  *
- * @param {string} userId — Supabase user UUID (from auth.user.id)
+ * @param {string} userId  Supabase user UUID (from auth.user.id)
  */
 export async function publishX3DHBundle(userId) {
-  if (__DEV_DEMO__) {
-    // Demo: publish the plain ECDH public key to user_keys (legacy path)
-    const kp = await getMyIdentityKeyPair();
-    await supabase.from('user_keys').upsert({
-      user_id:        userId,
-      public_key_b64: kp.publicB64,
-      updated_at:     new Date().toISOString(),
-    });
-    return;
-  }
-
   const identityKeyPair = await getMyIdentityKeyPair();
 
   // Generate SPK + 20 OPKs
@@ -257,13 +287,6 @@ export async function publishX3DHBundle(userId) {
   if (error) {
     console.warn('[X3DH] Failed to publish bundle:', error.message);
   }
-
-  // Also publish raw identity key to user_keys for legacy/demo compat
-  await supabase.from('user_keys').upsert({
-    user_id:        userId,
-    public_key_b64: identityKeyPair.publicB64,
-    updated_at:     new Date().toISOString(),
-  });
 }
 
 /** @deprecated Use publishX3DHBundle instead */
@@ -271,14 +294,14 @@ export async function publishMyPublicKey(userId) {
   return publishX3DHBundle(userId);
 }
 
-// ── Ratchet Session Management ────────────────────────────────────────────────
+//  Ratchet Session Management 
 
 /**
  * Get (or create) a Double Ratchet session for a conversation.
  *
  * Production path (X3DH):
- *   role = 'alice' → initiator: fetch Bob's bundle, run x3dhInitiate(), initAlice()
- *   role = 'bob'   → responder: x3dhRespond() from first message header, initBob()
+ *   role = 'alice'  initiator: fetch Bob's bundle, run x3dhInitiate(), initAlice()
+ *   role = 'bob'    responder: x3dhRespond() from first message header, initBob()
  *
  * Demo path:
  *   Falls back to plain ECDH(myIdentity, contactPublic) as before.
@@ -286,7 +309,7 @@ export async function publishMyPublicKey(userId) {
  * @param {string} conversationId
  * @param {string} contactId
  * @param {'alice'|'bob'} [role='alice']
- * @param {object|null}   [aliceHeader=null]  — x3dh header from first received message (Bob path)
+ * @param {object|null}   [aliceHeader=null]   x3dh header from first received message (Bob path)
  * @returns {Promise<DoubleRatchet>}
  */
 async function getOrCreateRatchet(conversationId, contactId, role = 'alice', aliceHeader = null) {
@@ -294,26 +317,15 @@ async function getOrCreateRatchet(conversationId, contactId, role = 'alice', ali
     return ratchets.get(conversationId);
   }
 
-  // ── Demo mode: plain ECDH fallback ──────────────────────────────────────────
-  if (__DEV_DEMO__) {
-    const myKP = await getMyIdentityKeyPair();
-    const contactPubB64 = await fetchContactPublicKeyDemo(contactId);
-    const contactPublicKey = await importPublicKey(contactPubB64);
-    const sharedBits = await ecdh(myKP.privateKeyECDH, contactPublicKey);
+  // Check encrypted storage for persisted session
+  const persisted = await loadSessionState(conversationId);
+  if (persisted) return persisted;
 
-    const ratchet = new DoubleRatchet();
-    await ratchet.initialize(sharedBits);
-    // Set our ratchet key pair for DH ratchet
-    ratchet.sendRatchetKeyPair = myKP;
-    ratchets.set(conversationId, ratchet);
-    return ratchet;
-  }
-
-  // ── Production mode: X3DH session establishment ──────────────────────────────
+  // Production mode: X3DH session establishment
   const myKP = await getMyIdentityKeyPair();
 
   if (role === 'alice') {
-    // ── Alice path: fetch Bob's bundle and initiate ────────────────────────────
+    //  Alice path: fetch Bob's bundle and initiate 
     const { data, error } = await supabase
       .from('x3dh_bundles')
       .select('bundle')
@@ -321,7 +333,7 @@ async function getOrCreateRatchet(conversationId, contactId, role = 'alice', ali
       .single();
 
     if (error || !data?.bundle) {
-      throw new Error('X3DH: contact has no published bundle — cannot establish session');
+      throw new Error('X3DH: contact has no published bundle  cannot establish session');
     }
 
     const theirBundle = data.bundle;
@@ -338,15 +350,17 @@ async function getOrCreateRatchet(conversationId, contactId, role = 'alice', ali
         updated_at: new Date().toISOString(),
       }).eq('user_id', contactId);
 
-      // Record the claim (best effort — OPK rotation is non-fatal)
+      // Record the claim (best effort  OPK rotation is non-fatal)
       const mySession = await supabase.auth.getUser();
       if (mySession?.data?.user?.id) {
-        await supabase.from('opk_claims').upsert({
-          claimer_id: mySession.data.user.id,
-          owner_id:   contactId,
-          opk_key_id: selectedOPK.keyId,
-          claimed_at: new Date().toISOString(),
-        }).catch(() => { /* non-fatal */ });
+        try {
+          await supabase.from('opk_claims').upsert({
+            claimer_id: mySession.data.user.id,
+            owner_id:   contactId,
+            opk_key_id: selectedOPK.keyId,
+            claimed_at: new Date().toISOString(),
+          });
+        } catch { /* non-fatal */ }
       }
     }
 
@@ -359,20 +373,27 @@ async function getOrCreateRatchet(conversationId, contactId, role = 'alice', ali
 
     const { sk, ad, ephemeralPublicB64 } = await x3dhInitiate(myKP, initiateBundle);
 
-    // Store ephemeral key so encryptMessage() can attach it to first message
-    pendingEphemeralKeys.set(conversationId, ephemeralPublicB64);
+    // Store ephemeral key and IDs so encryptMessage() can attach it to messages
+    // until we receive Bob's first ratchet step.
+    pendingEphemeralKeys.set(conversationId, {
+      ephemeralPublicB64,
+      signedPreKeyId: theirBundle.signedPreKey.keyId,
+      opkKeyId:       selectedOPK ? selectedOPK.keyId : null
+    });
     sessionADs.set(conversationId, ad);
 
     const ratchet = new DoubleRatchet();
     // Initialize with shared secret (sk) - Signal spec
     await ratchet.initialize(sk);
-    // Set our ratchet key pair for DH ratchet
-    ratchet.sendRatchetKeyPair = myKP;
     ratchets.set(conversationId, ratchet);
+    
+    // Persist immediately
+    await saveSessionState(conversationId, ratchet);
+    
     return ratchet;
 
   } else {
-    // ── Bob path: respond to Alice's first message header ─────────────────────
+    //  Bob path: respond to Alice's first message header 
     if (!aliceHeader) {
       throw new Error('X3DH: aliceHeader required for bob path');
     }
@@ -393,7 +414,7 @@ async function getOrCreateRatchet(conversationId, contactId, role = 'alice', ali
       }
     );
 
-    // Consume the OPK — delete it from storage so it's never reused
+    // Consume the OPK  delete it from storage so it's never reused
     if (myOneTimePreKey && aliceHeader.opkKeyId) {
       await deleteOneTimePreKey(aliceHeader.opkKeyId).catch(() => { /* non-fatal */ });
     }
@@ -413,7 +434,7 @@ async function getOrCreateRatchet(conversationId, contactId, role = 'alice', ali
   }
 }
 
-// ── Public API ────────────────────────────────────────────────────────────────
+//  Public API 
 
 /**
  * Encrypt a plaintext message using the Double Ratchet send chain.
@@ -432,21 +453,29 @@ export async function encryptMessage(conversationId, contactId, plaintext) {
   const ratchet = await getOrCreateRatchet(conversationId, contactId, 'alice');
   const ratchetPayload = await ratchet.encrypt(plaintext);
 
-  // Attach X3DH header on the first outbound message only
+  // Attach X3DH header as long as we haven't seen Bob's ratchet public key
   let x3dhHeader = null;
-  if (!__DEV_DEMO__ && pendingEphemeralKeys.has(conversationId)) {
-    const myKP = await getMyIdentityKeyPair();
+  if (pendingEphemeralKeys.has(conversationId)) {
+    const pending = pendingEphemeralKeys.get(conversationId);
     x3dhHeader = {
-      senderIdentityKey: myKP.publicB64,
-      ephemeralKey:      pendingEphemeralKeys.get(conversationId),
+      senderIdentityKey:  (await getMyIdentityKeyPair()).publicB64,
+      ephemeralKey:       pending.ephemeralPublicB64,
+      signedPreKeyId:     pending.signedPreKeyId,
+      opkKeyId:           pending.opkKeyId,
     };
-    // Clear — header only needs to be sent once
-    pendingEphemeralKeys.delete(conversationId);
+    
+    // If Bob has already responded (we have his ratchet key), we can stop sending the X3DH header
+    if (ratchet.recvRatchetPublicKey) {
+      pendingEphemeralKeys.delete(conversationId);
+    }
   }
+
+  // Persist updated state (chain key advanced)
+  await saveSessionState(conversationId, ratchet);
 
   return {
     ...ratchetPayload,
-    x3dh: x3dhHeader, // null on all subsequent messages
+    x3dh: x3dhHeader,
   };
 }
 
@@ -464,14 +493,19 @@ export async function encryptMessage(conversationId, contactId, plaintext) {
 export async function decryptPayload(conversationId, contactId, payload) {
   try {
     // If this is the first message from Alice, establish Bob's session first
-    if (!__DEV_DEMO__ && payload.x3dh && !ratchets.has(conversationId)) {
+    if (payload.x3dh && !ratchets.has(conversationId)) {
       await getOrCreateRatchet(conversationId, contactId, 'bob', payload.x3dh);
     }
 
     const ratchet = await getOrCreateRatchet(conversationId, contactId, 'bob', payload.x3dh ?? null);
-    return await ratchet.decrypt(payload);
+    const plaintext = await ratchet.decrypt(payload, sessionADs.get(conversationId));
+    
+    // Persist updated state (chain key advanced, possibly DH ratchet stepped)
+    await saveSessionState(conversationId, ratchet);
+    
+    return plaintext;
   } catch {
-    throw new Error('Double Ratchet decryption failed — possible tampering or key mismatch');
+    throw new Error('Double Ratchet decryption failed  possible tampering or key mismatch');
   }
 }
 
@@ -497,9 +531,7 @@ export async function getMyPublicB64() {
  * @returns {Promise<string>} base64 public key
  */
 export async function getContactPublicB64(contactId) {
-  if (__DEV_DEMO__) {
-    return fetchContactPublicKeyDemo(contactId);
-  }
+  // Production path: read from X3DH bundle on Supabase
 
   const { data, error } = await supabase
     .from('x3dh_bundles')
@@ -511,7 +543,7 @@ export async function getContactPublicB64(contactId) {
     return data.bundle.identityKey.publicB64;
   }
 
-  throw new Error('Contact has no published X3DH bundle — cannot verify identity');
+  throw new Error('Contact has no published X3DH bundle  cannot verify identity');
 }
 
 /**

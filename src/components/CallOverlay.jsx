@@ -1,31 +1,40 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Mic, Volume2, Video, PhoneOff } from 'lucide-react';
 import { useApp } from '@/context/AppContext';
+import { useWebRTC } from '@/context/WebRTCContext';
 import Av from './Av';
 import RadialDataRings from './RadialDataRings';
+import { supabase } from '@/lib/supabase';
 
 export default function CallOverlay() {
-  const { activeCall, endCall, addNotification } = useApp();
-  const [status, setStatus] = useState('Appel…');
+  const { addNotification } = useApp();
+  const { activeCall, localStream, remoteStream, cleanup } = useWebRTC();
   const [seconds, setSeconds] = useState(0);
+
   const [muted, setMuted] = useState(false);
   const [speaker, setSpeaker] = useState(false);
+  const [isVideo, setIsVideo] = useState(false);
+
+  const localVideoRef = useRef(null);
+  const remoteVideoRef = useRef(null);
 
   useEffect(() => {
-    if (!activeCall) return;
-    // Simulate connection after 2s
-    const connectTimer = setTimeout(() => {
-      setStatus('Connecté · E2E Chiffré');
-    }, 2000);
-
-    return () => clearTimeout(connectTimer);
-  }, [activeCall]);
+    if (localVideoRef.current && localStream) {
+      localVideoRef.current.srcObject = localStream;
+    }
+  }, [localStream]);
 
   useEffect(() => {
-    if (!activeCall || status !== 'Connecté · E2E Chiffré') return;
+    if (remoteVideoRef.current && remoteStream) {
+      remoteVideoRef.current.srcObject = remoteStream;
+    }
+  }, [remoteStream]);
+
+  useEffect(() => {
+    if (!activeCall || activeCall.status !== 'active') return;
     const interval = setInterval(() => setSeconds((s) => s + 1), 1000);
     return () => clearInterval(interval);
-  }, [activeCall, status]);
+  }, [activeCall]);
 
   if (!activeCall) return null;
 
@@ -34,53 +43,102 @@ export default function CallOverlay() {
   const timeStr = `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
 
   const handleEndCall = () => {
-    endCall();
+    // Notify target that we ended the call
+    supabase.channel(`vanish:signaling:${activeCall.id}`).send({
+      type: 'broadcast',
+      event: 'call-ended',
+      payload: {}
+    });
+    
+    cleanup();
     addNotification({
       type: 'message',
       text: `📞 Appel terminé · Durée: ${timeStr}`,
     });
-    setStatus('Appel…');
     setSeconds(0);
   };
 
+  const toggleMute = () => {
+    if (localStream) {
+      localStream.getAudioTracks().forEach(track => {
+        track.enabled = muted;
+      });
+      setMuted(!muted);
+    }
+  };
+
+  const toggleVideo = () => {
+    if (localStream) {
+      localStream.getVideoTracks().forEach(track => {
+        track.enabled = isVideo;
+      });
+      setIsVideo(!isVideo);
+    }
+  };
+
   const controls = [
-    { icon: Mic, active: muted, onClick: () => setMuted(!muted), label: 'Muet' },
+    { icon: Mic, active: muted, onClick: toggleMute, label: 'Muet' },
     { icon: Volume2, active: speaker, onClick: () => setSpeaker(!speaker), label: 'HP' },
-    { icon: Video, active: false, onClick: () => {}, label: 'Vidéo' },
+    { icon: Video, active: isVideo, onClick: toggleVideo, label: 'Vidéo' },
   ];
+
+  const statusStr = activeCall.status === 'ringing' ? 'Appel en cours…' : 'Connecté · E2E Chiffré';
 
   return (
     <div
-      className="absolute inset-0 z-[80] flex flex-col items-center justify-center"
+      className="absolute inset-0 z-[80] flex flex-col items-center justify-center overflow-hidden"
       style={{ backgroundColor: 'rgba(5, 0, 0, 0.98)' }}
     >
+      {/* Remote Video Background */}
+      {remoteStream && remoteStream.getVideoTracks().length > 0 && (
+        <video
+          ref={remoteVideoRef}
+          autoPlay
+          playsInline
+          className="absolute inset-0 w-full h-full object-cover opacity-60"
+        />
+      )}
+
       {/* Radial rings behind avatar */}
-      <RadialDataRings />
+      {!remoteStream && <RadialDataRings />}
 
       {/* Status */}
       <p className="text-xs tracking-[0.15em] uppercase mb-8 z-10" style={{ color: '#ff003c' }}>
-        {status}
+        {statusStr}
       </p>
 
-      {/* Avatar with pulse rings */}
+      {/* Avatar or Local Video */}
       <div className="relative z-10 mb-6">
-        <Av name={activeCall.name} size={92} online={false} />
-        {/* Pulsing ring */}
-        <div
-          className="absolute inset-0 rounded-full"
-          style={{
-            border: '2px solid rgba(255, 0, 60, 0.5)',
-            animation: 'ring-pulse 2s infinite ease-out',
-            transform: 'scale(1.2)',
-          }}
-        />
+        {localStream && localStream.getVideoTracks().length > 0 ? (
+          <div className="relative w-32 h-44 rounded-2xl overflow-hidden border-2 border-[#ff003c]/30 shadow-2xl">
+            <video
+              ref={localVideoRef}
+              autoPlay
+              playsInline
+              muted
+              className="w-full h-full object-cover scale-x-[-1]"
+            />
+          </div>
+        ) : (
+          <div className="relative">
+            <Av name={activeCall.name} size={92} online={false} />
+            <div
+              className="absolute inset-0 rounded-full"
+              style={{
+                border: '2px solid rgba(255, 0, 60, 0.5)',
+                animation: 'ring-pulse 2s infinite ease-out',
+                transform: 'scale(1.2)',
+              }}
+            />
+          </div>
+        )}
       </div>
 
       {/* Name */}
       <h2 className="text-xl font-medium text-white mb-2 z-10">{activeCall.name}</h2>
 
       {/* Timer */}
-      {status === 'Connecté · E2E Chiffré' && (
+      {activeCall.status === 'active' && (
         <p className="text-2xl font-mono text-white/80 mb-10 z-10">{timeStr}</p>
       )}
 

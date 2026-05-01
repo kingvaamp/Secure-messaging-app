@@ -22,7 +22,7 @@ import { hkdf, hmac, encrypt, decrypt, toB64, fromB64, generateKeyPair, importPu
 const ROOT_KEY_INFO = 'VanishText.RootKey';
 const CHAIN_KEY_INFO = 'VanishText.ChainKey';
 
-// HMAC discriminators (Signal spec §3.3.2)
+// HMAC discriminators (Signal spec 3.3.2)
 // messageKey = HMAC-SHA256(chainKey, 0x01)
 // chainKey = HMAC-SHA256(chainKey, 0x02)
 const MESSAGE_KEY_DISCRIMINATOR = new Uint8Array([0x01]);
@@ -42,7 +42,7 @@ const DH_RATCHET_INFO = 'VanishText.DHRatchet';
 // REUSED: constantTimeEqual from primitives
 
 /**
- * Encode message number as 4-byte big-endian (Signal §3.3.1)
+ * Encode message number as 4-byte big-endian (Signal 3.3.1)
  * Used as Associated Data to prevent replay attacks
  */
 function encodeMessageNumber(msgNum) {
@@ -62,7 +62,7 @@ async function kdfRootKey(dhOutput, currentRootKey, info) {
 }
 
 /**
- * Symmetric-key ratchet (Signal §3.3.2)
+ * Symmetric-key ratchet (Signal 3.3.2)
  * 
  * messageKey = HMAC-SHA256(chainKey, 0x01)
  * nextChainKey = HMAC-SHA256(chainKey, 0x02)
@@ -134,7 +134,7 @@ export class DoubleRatchet {
 
   /**
    * Initialize ratchet from X3DH shared secret
-   * Signal §3.3 - KDF after X3DH
+   * Signal 3.3 - KDF after X3DH
    * 
    * @param {ArrayBuffer} x3dhSecret - Output from X3DH key agreement
    */
@@ -183,18 +183,18 @@ export class DoubleRatchet {
     // Store Alice's ratchet public key
     this.recvRatchetPublicKey = await importPublicKey(theirRatchetPublicKeyB64);
     
-    // Perform initial DH ratchet (Signal §3.4)
+    // Perform initial DH ratchet (Signal 3.4)
     await this.performDHRatchet();
   }
 
   /**
-   * DH Ratchet Step - Signal §3.4
+   * DH Ratchet Step - Signal 3.4
    * 
    * This is what provides POST-COMPROMISE SECURITY
    * 
    * When we receive a new DH public key from the other party:
-   * 1. DH with old send key + their new key → new root + recv chain
-   * 2. Generate new send key + DH with their new key → new root + send chain
+   * 1. DH with old send key + their new key  new root + recv chain
+   * 2. Generate new send key + DH with their new key  new root + send chain
    * 
    * Result: Fresh keys even if current ones were compromised
    */
@@ -204,7 +204,7 @@ export class DoubleRatchet {
     }
     
     // Step 1: DH old send ratchet key with their recv key
-    // → new root key + new receive chain
+    //  new root key + new receive chain
     const dhOutput1 = await ecdh(
       this.sendRatchetKeyPair.privateKey,
       this.recvRatchetPublicKey
@@ -215,7 +215,7 @@ export class DoubleRatchet {
     this.recvChainKey = keys1.slice(32, 64).buffer;
     
     // Step 2: Generate NEW send ratchet key pair
-    // Then DH with their recv key → new root + new send chain
+    // Then DH with their recv key  new root + new send chain
     this.sendRatchetKeyPair = await generateKeyPair();
     const dhOutput2 = await ecdh(
       this.sendRatchetKeyPair.privateKey,
@@ -232,7 +232,7 @@ export class DoubleRatchet {
   }
 
   /**
-   * Encrypt message - Signal ��3.3.3
+   * Encrypt message - Signal 3.3.3
    * 
    * PERFECT FORWARD SECRECY:
    * 1. Derive message key + next chain key from current chain key
@@ -286,7 +286,7 @@ export class DoubleRatchet {
   }
 
   /**
-   * Decrypt message - Signal §3.3.4
+   * Decrypt message - Signal 3.3.4
    * 
    * 1. Derive message key + next chain key from current chain key
    * 2. Decrypt with message key + AD
@@ -352,7 +352,7 @@ export class DoubleRatchet {
    * Serialize state for storage
    * Does NOT include CryptoKey objects
    *
-   * BUG FIX: was synchronous — crypto.subtle.exportKey() is async and its Promise
+   * BUG FIX: was synchronous  crypto.subtle.exportKey() is async and its Promise
    * was being passed directly to toB64(), producing a serialized Promise object
    * ("[object Promise]") instead of the actual base64 key bytes. recvRatchetPublicKey
    * always came back as null after a restore, breaking the DH ratchet.
@@ -360,7 +360,7 @@ export class DoubleRatchet {
   async serialize() {
     if (!this.initialized) return null;
 
-    // Must await before toB64 — exportKey returns a Promise
+    // Must await before toB64  exportKey returns a Promise
     let recvRatchetPublicKeyB64 = null;
     if (this.recvRatchetPublicKey) {
       const raw = await crypto.subtle.exportKey('raw', this.recvRatchetPublicKey);
@@ -383,11 +383,11 @@ export class DoubleRatchet {
   /**
    * Restore state from serialized
    *
-   * BUG FIX: was a synchronous function that used `await` internally — this is a
+   * BUG FIX: was a synchronous function that used `await` internally  this is a
    * syntax error caught at runtime in strict mode and silently fails in sloppy mode.
    * The awaits on loadRatchetKeys() and importPublicKey() were never executed, so
    * both the send and receive DH ratchet keys were always undefined after a restore.
-   * Also removed the unnecessary dynamic import — importPublicKey is already imported
+   * Also removed the unnecessary dynamic import  importPublicKey is already imported
    * at the module level.
    */
   async restore(state) {
@@ -406,7 +406,7 @@ export class DoubleRatchet {
     }
 
     // Restore receiver's DH public key
-    // importPublicKey is already imported at the module top — no dynamic import needed
+    // importPublicKey is already imported at the module top  no dynamic import needed
     if (state.recvRatchetPublicKey) {
       this.recvRatchetPublicKey = await importPublicKey(state.recvRatchetPublicKey);
     }

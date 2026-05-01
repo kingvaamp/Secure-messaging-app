@@ -2,13 +2,14 @@ import { useRef, useState } from 'react';
 import {
   Smartphone, Key, Info, LogOut, Trash2,
   Shield, Eye, Fingerprint, Bell, Volume2,
-  ChevronRight, Edit3
+  ChevronRight, Edit3, AtSign, RefreshCcw
 } from 'lucide-react';
 import { useApp } from '@/context/AppContext';
 import { useAuth } from '@/context/AuthContext';
 import Av from '@/components/Av';
 import Tog from '@/components/Tog';
 import { registerBiometric } from '@/lib/webauthn';
+import { performMasterReset } from '@/utils/resetUtils';
 
 const SECURITY_ITEMS = [
   { key: 'blockScreenshots', label: 'Bloquer les captures', desc: 'Empêcher les captures dans les chats', icon: Shield },
@@ -18,17 +19,20 @@ const SECURITY_ITEMS = [
   { key: 'notificationSounds', label: 'Sons de notification', desc: 'Son pour nouveaux messages', icon: Volume2 },
 ];
 
-const ACCOUNT_ITEMS = [
-  { label: 'Numéro de téléphone', icon: Smartphone, value: '+221 77 999 0000' },
-  { label: 'Clé de chiffrement', icon: Key, value: 'Vérifié ✓' },
-  { label: 'À propos de VanishText', icon: Info, value: 'v2.0' },
-];
-
 export default function ProfileScreen() {
-  const { currentUser, securitySettings, updateSecurity, stats, updateCurrentUser, addNotification } = useApp();
+  const { currentUser, securitySettings, updateSecurity, stats, updateCurrentUser, addNotification, conversations, calls, wipeLocalData } = useApp();
   const { session, signOut } = useAuth();
   const fileInputRef = useRef(null);
   const [isRegisteringBiometric, setIsRegisteringBiometric] = useState(false);
+
+  const name = currentUser?.name || 'Chargement...';
+  const pseudo = currentUser?.pseudo || '';
+
+  const ACCOUNT_ITEMS = [
+    { label: 'Pseudo', icon: AtSign, value: pseudo ? `@${pseudo}` : 'Non défini' },
+    { label: 'Clé de chiffrement', icon: Key, value: 'Vérifié ✓' },
+    { label: 'À propos de VanishText', icon: Info, value: 'v2.0' },
+  ];
 
   const handleLogout = () => {
     signOut();
@@ -64,7 +68,6 @@ export default function ProfileScreen() {
   };
 
   const handleSecurityToggle = async (key, newValue) => {
-    // Intercept Face ID enable to run WebAuthn registration
     if (key === 'faceIdLock' && newValue === true) {
       setIsRegisteringBiometric(true);
       try {
@@ -73,7 +76,6 @@ export default function ProfileScreen() {
         addNotification({ type: 'success', text: 'Face ID / Touch ID configuré avec succès' });
       } catch (err) {
         addNotification({ type: 'error', text: err.message || 'Échec de la configuration biométrique' });
-        // Don't update security setting so it remains off
       } finally {
         setIsRegisteringBiometric(false);
       }
@@ -82,12 +84,18 @@ export default function ProfileScreen() {
     }
   };
 
+  const realStats = {
+    messages: conversations.reduce((acc, c) => acc + c.messages.length, 0),
+    chats: conversations.length,
+    calls: calls.length,
+  };
+
   return (
     <div className="h-full flex flex-col overflow-y-auto" style={{ scrollbarWidth: 'none' }}>
       {/* Header with avatar */}
-      <div className="flex flex-col items-center pt-8 pb-6 px-4">
+      <div className="flex flex-col items-center pt-16 pb-6 px-4">
         <div className="relative cursor-pointer transition-transform active:scale-95" onClick={handleAvatarClick}>
-          <Av name={currentUser.name} src={currentUser.avatar} size={80} online={false} />
+          <Av name={name} src={currentUser?.avatar} size={80} online={false} />
           <button
             className="absolute bottom-0 right-0 flex items-center justify-center rounded-full"
             style={{
@@ -108,11 +116,16 @@ export default function ProfileScreen() {
           />
         </div>
 
-        <h2 className="text-xl font-medium text-white mt-4">{currentUser.name}</h2>
-        <p className="text-[13px] mt-1" style={{ color: 'rgba(255,255,255,0.4)' }}>
-          {currentUser.phone}
+        <h2 className="text-xl font-medium text-white mt-4">{name}</h2>
+        {pseudo && (
+          <p className="text-sm font-medium mt-0.5" style={{ color: '#ff003c' }}>
+            @{pseudo}
+          </p>
+        )}
+        <p className="text-[13px] mt-1 text-white">
+          {currentUser?.phone}
         </p>
-        <p className="text-[11px] italic mt-1" style={{ color: 'rgba(255,255,255,0.25)' }}>
+        <p className="text-[11px] italic mt-1 text-white/60">
           🔒 Privacy first.
         </p>
       </div>
@@ -123,24 +136,24 @@ export default function ProfileScreen() {
         style={{ backgroundColor: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,0,60,0.06)' }}
       >
         <div className="flex flex-col items-center">
-          <span className="text-xl font-semibold" style={{ color: '#ff003c' }}>{stats.messages}</span>
-          <span className="text-[10px] uppercase tracking-wider mt-1" style={{ color: 'white' }}>Messages</span>
+          <span className="text-xl font-semibold text-white">{realStats.messages}</span>
+          <span className="text-[10px] uppercase tracking-wider mt-1 text-white/50">Messages</span>
         </div>
         <div
           className="w-px h-8"
           style={{ backgroundColor: 'rgba(255,255,255,0.06)' }}
         />
         <div className="flex flex-col items-center">
-          <span className="text-xl font-semibold" style={{ color: '#ff003c' }}>{stats.chats}</span>
-          <span className="text-[10px] uppercase tracking-wider mt-1" style={{ color: 'white' }}>Chats</span>
+          <span className="text-xl font-semibold text-white">{realStats.chats}</span>
+          <span className="text-[10px] uppercase tracking-wider mt-1 text-white/50">Chats</span>
         </div>
         <div
           className="w-px h-8"
           style={{ backgroundColor: 'rgba(255,255,255,0.06)' }}
         />
         <div className="flex flex-col items-center">
-          <span className="text-xl font-semibold" style={{ color: '#ff003c' }}>{stats.calls}</span>
-          <span className="text-[10px] uppercase tracking-wider mt-1" style={{ color: 'white' }}>Appels</span>
+          <span className="text-xl font-semibold text-white">{realStats.calls}</span>
+          <span className="text-[10px] uppercase tracking-wider mt-1 text-white/50">Appels</span>
         </div>
       </div>
 
@@ -223,9 +236,16 @@ export default function ProfileScreen() {
             <LogOut size={18} style={{ color: '#ff003c' }} />
             <span className="text-[14px]" style={{ color: '#ff003c' }}>Se déconnecter</span>
           </button>
-          <button className="w-full flex items-center gap-3 px-4 py-3.5 text-left">
-            <Trash2 size={18} style={{ color: '#ff003c' }} />
-            <span className="text-[14px]" style={{ color: '#ff003c' }}>Supprimer le compte</span>
+          <button 
+            onClick={() => {
+              if (window.confirm('⚠️ RÉINITIALISATION TOTALE ?\n\nCela effacera TOUT (clés, messages, session) de cet appareil. Cette action est irréversible.')) {
+                performMasterReset();
+              }
+            }}
+            className="w-full flex items-center gap-3 px-4 py-3.5 text-left"
+          >
+            <RefreshCcw size={18} style={{ color: '#ff003c' }} />
+            <span className="text-[14px]" style={{ color: '#ff003c' }}>Réinitialiser l'appareil</span>
           </button>
         </div>
       </div>

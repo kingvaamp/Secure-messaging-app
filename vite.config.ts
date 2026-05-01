@@ -23,9 +23,11 @@ export default defineConfig({
     },
   },
   define: {
-    // Build-time constant: true in development, false in production.
-    // Enables complete tree-shaking of demo data from production bundles.
-    __DEV_DEMO__: JSON.stringify(process.env.NODE_ENV !== 'production'),
+    // Build-time constants: control security posture of the crypto layer.
+    // __DEV_DEMO__: true in development (uses plain ECDH), false in production (uses X3DH).
+    // __PRIVACY_MODE__: enables privacy-preserving lookups (Tor proxy, PIR, etc.)
+    __DEV_DEMO__: JSON.stringify(false),
+    __PRIVACY_MODE__: JSON.stringify(false),
   },
 });
 

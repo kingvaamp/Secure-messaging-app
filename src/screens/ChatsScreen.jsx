@@ -2,18 +2,20 @@ import { useState, useRef, useEffect } from 'react';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import {
   ChevronLeft, Phone, MoreVertical, Lock, Unlock,
-  Send, Plus, Mic, CheckCheck, AlertTriangle, X, FileText
+  Send, Plus, Mic, CheckCheck, AlertTriangle, X, FileText, Search, ShieldCheck
 } from 'lucide-react';
 import { useApp } from '@/context/AppContext';
+import { useWebRTC } from '@/context/WebRTCContext';
 import Av from '@/components/Av';
 import BadgeE2E from '@/components/BadgeE2E';
 import RedProgressBar from '@/components/RedProgressBar';
 import MediaTray from '@/components/MediaTray';
 import VoiceRecorder from '@/components/VoiceRecorder';
+import PlasmaBackground from '@/components/PlasmaBackground';
 import { encryptMessage, decryptPayload } from '@/crypto/sessionManager';
 
 // ============================================
-// Conversation Row
+// Conversation Row (Premium)
 // ============================================
 function ConversationRow({ conv, onClick, isLast, contacts }) {
   const contact = contacts.find((c) => c.id === conv.contactId);
@@ -24,36 +26,33 @@ function ConversationRow({ conv, onClick, isLast, contacts }) {
   return (
     <button
       onClick={onClick}
-      className={`w-full flex items-center gap-3.5 px-4 py-3.5 text-left transition-all duration-300 hover:bg-white/5 relative group outline-none ${hasUnread ? 'bg-[rgba(255,0,60,0.03)]' : ''}`}
-      style={{ borderBottom: isLast ? 'none' : '1px solid rgba(255, 0, 60, 0.05)' }}
+      className={`w-full flex items-center gap-4 px-5 py-4 text-left transition-all duration-500 hover:bg-white/[0.03] active:scale-[0.98] relative group outline-none ${hasUnread ? 'bg-[#ff003c]/[0.02]' : ''}`}
+      style={{ borderBottom: isLast ? 'none' : '1px solid rgba(255, 0, 60, 0.08)' }}
     >
       {hasUnread && (
-        <div className="absolute left-0 top-3 bottom-3 w-1 rounded-r-md" style={{ backgroundColor: '#ff003c', boxShadow: '2px 0 8px rgba(255,0,60,0.6)' }} />
+        <div className="absolute left-0 top-4 bottom-4 w-1 rounded-r-full" style={{ backgroundColor: '#ff003c', boxShadow: '2px 0 12px #ff003c' }} />
       )}
 
-      <Av name={contact.name} size={46} online={contact.online} borderColor={hasUnread ? 'rgba(255,0,60,0.4)' : 'rgba(255,0,60,0.15)'} />
+      <div className="relative">
+        <Av name={contact.name} size={50} online={contact.online} borderColor={hasUnread ? '#ff003c' : 'rgba(255,255,255,0.1)'} />
+        {hasUnread && (
+          <div className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-[#ff003c] border-2 border-black animate-pulse" />
+        )}
+      </div>
 
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center justify-between">
-          <h3 className={`text-[16px] truncate ${hasUnread ? 'font-semibold text-white drop-shadow-[0_0_8px_rgba(255,0,60,0.3)]' : 'font-medium text-white/95'}`}>
+      <div className="flex-1 min-w-0 ml-1">
+        <div className="flex items-center justify-between mb-0.5">
+          <h3 className={`text-[17px] truncate ${hasUnread ? 'font-bold text-white' : 'font-medium text-white/90'}`}>
             {contact.name}
           </h3>
-          <span className="text-[12px] font-medium flex-shrink-0 ml-2" style={{ color: hasUnread ? '#ff003c' : 'rgba(255,255,255,0.4)' }}>
+          <span className="text-[11px] font-bold tracking-tighter uppercase opacity-30">
             {conv.timestamp}
           </span>
         </div>
-        <div className="flex items-center justify-between mt-0.5">
-          <p className={`text-[13px] truncate ${hasUnread ? 'text-[#ff003c] italic' : 'text-white/45'}`}>
-            {hasUnread ? '🔒 Message chiffré' : conv.lastMessage}
+        <div className="flex items-center justify-between">
+          <p className={`text-[13.5px] truncate ${hasUnread ? 'text-[#ff003c] font-medium' : 'text-white/40'}`}>
+            {hasUnread ? '🔒 Nouveau message sécurisé' : conv.lastMessage}
           </p>
-          {hasUnread && (
-            <span
-              className="flex items-center justify-center rounded-full text-[10px] font-bold text-white flex-shrink-0 ml-2 shadow-[0_0_12px_rgba(255,0,60,0.8)]"
-              style={{ minWidth: 20, height: 20, padding: '0 6px', backgroundColor: '#ff003c' }}
-            >
-              {conv.unreadCount}
-            </span>
-          )}
         </div>
       </div>
     </button>
@@ -61,7 +60,7 @@ function ConversationRow({ conv, onClick, isLast, contacts }) {
 }
 
 // ============================================
-// Message Bubble
+// Message Bubble (Premium Glow & Glass)
 // ============================================
 function MessageBubble({ message, isSent, onDecrypt, ttl, isVanishing }) {
   const [glitching, setGlitching] = useState(false);
@@ -72,89 +71,87 @@ function MessageBubble({ message, isSent, onDecrypt, ttl, isVanishing }) {
       setTimeout(() => {
         setGlitching(false);
         onDecrypt();
-      }, 150);
+      }, 200);
     }
   };
 
-  const bubbleStyle = isSent
-    ? { backgroundColor: '#8b0000', borderRadius: '18px 18px 4px 18px' }
-    : { backgroundColor: '#222', borderRadius: '18px 18px 18px 4px' };
-
   return (
     <div 
-      className={`flex ${isSent ? 'justify-end' : 'justify-start'} overflow-hidden transition-all ease-[cubic-bezier(0.4,0,0.2,1)]`}
+      className={`flex ${isSent ? 'justify-end pl-12' : 'justify-start pr-12'} transition-all duration-700 ease-[cubic-bezier(0.23,1,0.32,1)] px-4`}
       style={{
-        transitionDuration: '600ms',
         opacity: isVanishing ? 0 : 1,
-        transform: isVanishing ? 'scale(0.85) translateY(15px)' : 'scale(1) translateY(0)',
-        filter: isVanishing ? 'blur(10px)' : 'none',
-        maxHeight: isVanishing ? 0 : 600, // collapse height smoothly
-        marginBottom: isVanishing ? 0 : 8,
-        paddingLeft: 16,
-        paddingRight: 16,
+        transform: isVanishing ? 'scale(0.9) translateY(20px)' : 'scale(1) translateY(0)',
+        filter: isVanishing ? 'blur(12px)' : 'none',
+        maxHeight: isVanishing ? 0 : 800,
+        marginBottom: isVanishing ? 0 : 12,
       }}
     >
       <div
-        className="max-w-[75%] px-3.5 py-2.5 cursor-pointer transition-all active:scale-[0.98]"
-        style={{
-          ...bubbleStyle,
-          border: '1px solid rgba(255, 0, 60, 0.1)',
-          filter: glitching ? 'invert(1) skewX(10deg)' : 'none',
-          transition: 'filter 0.15s ease, transform 0.1s ease',
-        }}
+        className="relative group cursor-pointer active:scale-[0.98] transition-transform"
         onClick={handleTap}
       >
-        {message.locked ? (
-          <div className="flex items-center gap-1.5">
-            <Lock size={12} style={{ color: isSent ? '#f59e0b' : '#ff003c' }} />
-            <span className={`text-[13px] italic ${isSent ? 'text-amber-400' : 'text-[#ff003c]'}`}>
-              {isSent ? 'Toucher pour révéler' : 'Toucher pour déchiffrer'}
-            </span>
-          </div>
-        ) : (
-          <>
-            {message.attachment && (
-              <div className="mb-2 rounded-lg overflow-hidden border border-white/5">
-                {message.attachment.type.startsWith('image/') ? (
-                  <img src={message.attachment.url} alt="attachment" className="w-full max-h-[200px] object-cover" />
-                ) : message.attachment.type.startsWith('video/') ? (
-                  <video src={message.attachment.url} controls className="w-full max-h-[200px] bg-black" />
-                ) : (
-                  <div className="flex items-center gap-2 p-3 bg-white/5">
-                    <FileText size={18} className="text-[#ff003c]" />
-                    <span className="text-[13px] text-white/90 truncate">{message.attachment.name}</span>
-                  </div>
-                )}
-              </div>
-            )}
-            {message.text && (
-              <p className="text-[14px] text-white/90 leading-relaxed">{message.text}</p>
-            )}
-            <div className="flex items-center justify-end gap-1.5 mt-1">
-              <span className="text-[10px]" style={{ color: 'rgba(255,255,255,0.4)' }}>
-                {message.time}
+        <div
+          className={`px-4 py-2.5 rounded-[22px] transition-all duration-300 relative overflow-hidden ${
+            isSent 
+              ? 'bg-gradient-to-br from-[#ff003c] to-[#8b0000] text-white shadow-[0_4px_20px_rgba(255,0,60,0.25)]' 
+              : 'bg-white/[0.03] border border-white/10 text-white/90 backdrop-blur-md'
+          }`}
+          style={{
+            borderRadius: isSent ? '22px 22px 4px 22px' : '22px 22px 22px 4px',
+            filter: glitching ? 'hue-rotate(90deg) brightness(1.5) contrast(1.2)' : 'none',
+          }}
+        >
+          {/* Subtle noise/texture overlay */}
+          <div className="absolute inset-0 opacity-[0.03] pointer-events-none bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')]" />
+
+          {message.locked ? (
+            <div className="flex items-center gap-2 py-1">
+              <Lock size={14} className={isSent ? 'text-white/60' : 'text-[#ff003c]'} />
+              <span className={`text-[13px] font-medium tracking-tight ${isSent ? 'text-white/80' : 'text-[#ff003c]'}`}>
+                {isSent ? 'Toucher pour révéler' : 'Message chiffré'}
               </span>
-              {isSent && message.isRead && (
-                <CheckCheck size={12} style={{ color: '#ff003c' }} />
-              )}
             </div>
-            {message.isRead && message.ttl > 0 && (
-              <div className="mt-2.5 flex items-center justify-end gap-3">
-                <div className="flex-1 max-w-[120px]">
-                  <RedProgressBar ttl={ttl} max={message.ttl || 180} />
+          ) : (
+            <>
+              {message.attachment && (
+                <div className="mb-2.5 rounded-xl overflow-hidden border border-white/10 shadow-inner">
+                  {message.attachment.type.startsWith('image/') ? (
+                    <img src={message.attachment.url} alt="attachment" className="w-full max-h-[260px] object-cover" />
+                  ) : message.attachment.type.startsWith('video/') ? (
+                    <video src={message.attachment.url} controls className="w-full max-h-[260px] bg-black" />
+                  ) : (
+                    <div className="flex items-center gap-3 p-4 bg-white/5">
+                      <FileText size={20} className="text-[#ff003c]" />
+                      <span className="text-[13px] font-medium truncate">{message.attachment.name}</span>
+                    </div>
+                  )}
                 </div>
-                <span 
-                  className="text-[11px] font-mono tracking-wider font-bold transition-colors duration-300" 
-                  style={{ 
-                    color: ttl <= 30 ? '#ff3333' : '#ff003c', 
-                    textShadow: ttl <= 30 ? '0 0 8px rgba(255,51,51,0.6)' : 'none' 
-                  }}
-                >
-                  {Math.floor(ttl / 60)}:{(ttl % 60).toString().padStart(2, '0')}
-                </span>
+              )}
+              {message.text && (
+                <p className="text-[15px] leading-relaxed tracking-tight">{message.text}</p>
+              )}
+              <div className="flex items-center justify-end gap-1.5 mt-1.5 opacity-50">
+                <span className="text-[10px] font-bold">{message.time}</span>
+                {isSent && <CheckCheck size={12} className={message.isRead ? 'text-white' : 'text-white/40'} />}
               </div>
-            )}
-          </>
+              
+              {/* TTL Progress Line */}
+              {message.isRead && message.ttl > 0 && (
+                <div className="mt-3 flex flex-col gap-1.5">
+                  <RedProgressBar ttl={ttl} max={message.ttl || 180} />
+                  <div className="flex justify-between items-center text-[9px] font-black tracking-widest uppercase opacity-40">
+                    <span>Vanish</span>
+                    <span>{Math.floor(ttl / 60)}:{(ttl % 60).toString().padStart(2, '0')}</span>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+        
+        {/* Glow effect for sent messages */}
+        {isSent && !isVanishing && (
+          <div className="absolute -inset-1 bg-[#ff003c]/20 blur-xl rounded-full -z-10 opacity-0 group-hover:opacity-100 transition-opacity" />
         )}
       </div>
     </div>
@@ -162,11 +159,18 @@ function MessageBubble({ message, isSent, onDecrypt, ttl, isVanishing }) {
 }
 
 // ============================================
-// New Message Modal
+// ============================================
+// New Message Modal (Premium Redesign)
 // ============================================
 function NewMessageModal({ onClose, onStartChat }) {
   const { contacts } = useApp();
   const [selected, setSelected] = useState([]);
+  const [search, setSearch] = useState('');
+
+  const filtered = contacts.filter(c => 
+    c.name.toLowerCase().includes(search.toLowerCase()) || 
+    c.phone.includes(search)
+  );
 
   const toggleContact = (id) => {
     setSelected((prev) =>
@@ -177,69 +181,101 @@ function NewMessageModal({ onClose, onStartChat }) {
   const handleStart = () => {
     if (selected.length === 1) {
       onStartChat(selected[0]);
-    } else if (selected.length > 1) {
-      // Broadcast mode
-      onClose();
     }
   };
 
   return (
-    <div className="absolute inset-0 z-[60] flex flex-col" style={{ backgroundColor: '#050000' }}>
+    <div className="absolute inset-0 z-[60] flex flex-col animate-in fade-in zoom-in-95 duration-200">
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-3xl" />
+      
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: '1px solid rgba(255,0,60,0.08)' }}>
-        <button onClick={onClose} className="text-white/60 hover:text-white transition-colors">
+      <div 
+        className="relative flex items-center justify-between px-4 py-3 z-10" 
+        style={{ borderBottom: '1px solid rgba(255,0,60,0.15)', backgroundColor: 'rgba(10, 0, 5, 0.6)' }}
+      >
+        <button onClick={onClose} className="p-2 -ml-2 text-white/60 hover:text-white transition-colors active:scale-90">
           <ChevronLeft size={24} />
         </button>
-        <h2 className="text-[15px] font-medium text-white">
-          {selected.length > 0 ? `${selected.length} contact${selected.length > 1 ? 's' : ''}` : 'Nouveau message'}
-        </h2>
+        <h2 className="text-[17px] font-semibold tracking-tight text-white">Nouveau message</h2>
         {selected.length > 0 ? (
-          <button onClick={handleStart} className="text-[13px] font-medium" style={{ color: '#ff003c' }}>
-            {selected.length === 1 ? 'Démarrer' : `Diffuser →`}
+          <button 
+            onClick={handleStart} 
+            className="px-4 py-1.5 rounded-full text-[13px] font-bold text-white transition-all shadow-[0_0_15px_rgba(255,0,60,0.5)] active:scale-95" 
+            style={{ backgroundColor: '#ff003c' }}
+          >
+            Démarrer
           </button>
         ) : (
-          <span className="w-14" />
+          <div className="w-10" />
         )}
       </div>
 
-      {/* Contact list */}
-      <div className="flex-1 overflow-y-auto">
-        {contacts.map((contact) => (
-          <button
-            key={contact.id}
-            onClick={() => toggleContact(contact.id)}
-            className="w-full flex items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-white/[0.02]"
-            style={{ borderBottom: '1px solid rgba(255,0,60,0.04)' }}
-          >
-            <div
-              className="flex items-center justify-center rounded border transition-colors flex-shrink-0"
-              style={{
-                width: 22,
-                height: 22,
-                borderColor: selected.includes(contact.id) ? '#ff003c' : 'rgba(255,255,255,0.2)',
-                backgroundColor: selected.includes(contact.id) ? '#ff003c' : 'transparent',
-              }}
-            >
-              {selected.includes(contact.id) && (
-                <CheckCheck size={14} className="text-white" />
-              )}
-            </div>
-            <Av name={contact.name} size={36} online={contact.online} />
-            <div className="flex-1 min-w-0">
-              <p className="text-[14px] text-white/90 truncate">{contact.name}</p>
-              <p className="text-[12px]" style={{ color: 'rgba(255,255,255,0.4)' }}>{contact.phone}</p>
-            </div>
-          </button>
-        ))}
+      {/* Search Bar */}
+      <div className="relative px-4 py-4 z-10">
+        <div 
+          className="flex items-center gap-3 px-4 py-2.5 rounded-2xl transition-all"
+          style={{ 
+            backgroundColor: 'rgba(255,255,255,0.04)', 
+            border: '1px solid rgba(255,0,60,0.1)',
+          }}
+        >
+          <Search size={18} className="text-white/30" />
+          <input 
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Rechercher un contact..."
+            className="flex-1 bg-transparent text-[15px] text-white placeholder:text-white/20 outline-none"
+          />
+        </div>
       </div>
 
-      {selected.length > 1 && (
-        <div className="px-4 py-2 text-center">
-          <p className="text-[10px] italic" style={{ color: 'rgba(255,255,255,0.3)' }}>
-            Envoyé individuellement · disparaît 3 min après lecture
-          </p>
+      {/* Contact list */}
+      <div className="relative flex-1 overflow-y-auto px-4 pb-10 z-10" style={{ scrollbarWidth: 'none' }}>
+        <div 
+          className="rounded-[24px] overflow-hidden" 
+          style={{ 
+            backgroundColor: 'rgba(255, 255, 255, 0.02)', 
+            border: '1px solid rgba(255, 0, 60, 0.08)',
+            backdropFilter: 'blur(20px)'
+          }}
+        >
+          {filtered.map((contact, index) => (
+            <button
+              key={contact.id}
+              onClick={() => toggleContact(contact.id)}
+              className="w-full flex items-center gap-4 px-5 py-4 text-left transition-all hover:bg-white/[0.04] active:bg-white/[0.08] group"
+              style={{ borderBottom: index < filtered.length - 1 ? '1px solid rgba(255,0,60,0.05)' : 'none' }}
+            >
+              <div
+                className="flex items-center justify-center rounded-lg border transition-all flex-shrink-0"
+                style={{
+                  width: 22,
+                  height: 22,
+                  borderColor: selected.includes(contact.id) ? '#ff003c' : 'rgba(255,255,255,0.15)',
+                  backgroundColor: selected.includes(contact.id) ? '#ff003c' : 'transparent',
+                  boxShadow: selected.includes(contact.id) ? '0 0 10px rgba(255,0,60,0.4)' : 'none'
+                }}
+              >
+                {selected.includes(contact.id) && <CheckCheck size={14} className="text-white" />}
+              </div>
+              <Av name={contact.name} size={42} online={contact.online} />
+              <div className="flex-1 min-w-0">
+                <p className="text-[16px] text-white/90 font-medium">{contact.name}</p>
+                <p className="text-[12px] opacity-40">{contact.phone}</p>
+              </div>
+            </button>
+          ))}
         </div>
-      )}
+      </div>
+
+      {/* Security footer */}
+      <div className="relative p-6 text-center z-10">
+        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/5 border border-white/10">
+          <Lock size={10} style={{ color: '#ff003c' }} />
+          <span className="text-[9px] uppercase tracking-wider text-white/40 font-bold">Chiffrement Signal Automatique</span>
+        </div>
+      </div>
     </div>
   );
 }
@@ -247,8 +283,12 @@ function NewMessageModal({ onClose, onStartChat }) {
 // ============================================
 // Chat Detail View
 // ============================================
+// ============================================
+// Chat Detail View (Premium Redesign)
+// ============================================
 function ChatDetail({ conv, onBack }) {
   const { contacts, currentUser, deleteMessage, sendMessage, decryptMessage, addNotification } = useApp();
+  const { initiateCall } = useWebRTC();
   const contact = contacts.find((c) => c.id === conv.contactId);
   const [messageText, setMessageText] = useState('');
   const [attachment, setAttachment] = useState(null);
@@ -277,7 +317,6 @@ function ChatDetail({ conv, onBack }) {
           if (m.isRead && !m.locked) {
             let currentTtl = prev[m.id] !== undefined ? prev[m.id] : m.ttl;
 
-            // Compute current TTL
             if (m.expiresAt) {
               const current = Math.max(0, Math.ceil((m.expiresAt - Date.now()) / 1000));
               if (currentTtl !== current) {
@@ -291,21 +330,18 @@ function ChatDetail({ conv, onBack }) {
               changed = true;
             }
 
-            // Trigger vanish animation if TTL hits 0
             if (currentTtl <= 0 && !vanishingIdsRef.current.has(m.id)) {
               vanishingIdsRef.current.add(m.id);
               vanishingChanged = true;
-              
-              // Actually delete the message from global state after animation completes
               setTimeout(() => {
                 deleteMessage(conv.id, m.id);
-              }, 600); // 600ms matches MessageBubble transitionDuration
+              }, 600);
             }
           }
         });
 
         if (vanishingChanged) {
-          setForceRender(v => v + 1); // trigger re-render so UI sees the new vanishingIds
+          setForceRender(v => v + 1);
         }
 
         return changed ? next : prev;
@@ -349,10 +385,6 @@ function ChatDetail({ conv, onBack }) {
 
   if (!contact) return null;
 
-  // SECURITY — Phase 3: Real ECDH + Double Ratchet encryption.
-  // encryptMessage() now establishes a real ECDH shared secret with the contact
-  // and encrypts using the Double Ratchet send chain.
-  // Each message advances the chain key → old key destroyed → forward secrecy.
   const handleSend = async () => {
     if (!messageText.trim() && !attachment) return;
 
@@ -363,18 +395,17 @@ function ChatDetail({ conv, onBack }) {
 
     let payload = null;
     try {
-      // Real ECDH + Double Ratchet encryption
       payload = await encryptMessage(conv.id, conv.contactId, plaintext);
     } catch (e) {
-      addNotification({ type: 'error', text: '⚠️ Échec du chiffrement — message non envoyé' });
+      console.error('[Chat] Encryption error:', e);
+      addNotification({ type: 'error', text: '⚠️ Échec du chiffrement: ' + (e?.message || 'Erreur inconnue') });
       return;
     }
 
     const newMsg = {
-      // Cryptographically random ID — not predictable like Date.now()
       id: `msg-${Array.from(crypto.getRandomValues(new Uint8Array(8)), b => b.toString(16).padStart(2, '0')).join('')}`,
       senderId: 'me',
-      text: messageText.trim(), // sender keeps plaintext locally (never re-encrypted to self)
+      text: messageText.trim(),
       attachment,
       time: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
       isRead: false,
@@ -384,27 +415,11 @@ function ChatDetail({ conv, onBack }) {
     };
 
     sendMessage(conv.id, newMsg);
-    
-    // NATIVE: Trigger haptic feedback for a "premium" feel
     Haptics.impact({ style: ImpactStyle.Medium }).catch(() => {});
-
     setMessageText('');
     setAttachment(null);
   };
 
-  // SECURITY — Phase 3: Real Double Ratchet decryption.
-  //
-  // Three cases:
-  //   1. OWN sent message (senderId === 'me'):
-  //      The sender always keeps the plaintext locally. No decryption needed.
-  //      In Signal's model, you never re-encrypt messages to yourself.
-  //
-  //   2. Received message with real ratchet payload:
-  //      Full Double Ratchet ratchet.decrypt() — advances recv chain.
-  //      Throws on GCM auth tag failure (tampered ciphertext).
-  //
-  //   3. Legacy demo messages (m3, m6 — no real ciphertext):
-  //      Fallback to hardcoded demo strings.
   const handleDecrypt = async (msg) => {
     if (msg.locked === false) return;
 
@@ -412,13 +427,9 @@ function ChatDetail({ conv, onBack }) {
     let attachmentObj = null;
 
     if (msg.senderId === 'me') {
-      // Case 1: own sent message — plaintext already stored locally by sender
-      // A real client never needs to decrypt its own messages (it never forgets them)
       plaintext = msg.text;
       attachmentObj = msg.attachment;
-
     } else if (msg.payload?.iv && msg.payload?.ciphertext) {
-      // Case 2: received encrypted message — real Double Ratchet decryption
       try {
         const decryptedStr = await decryptPayload(conv.id, conv.contactId, msg.payload);
         try {
@@ -433,20 +444,11 @@ function ChatDetail({ conv, onBack }) {
           plaintext = decryptedStr;
         }
       } catch {
-        addNotification({
-          type: 'error',
-          text: '⚠️ Authentification échouée — message corrompu ou falsifié',
-        });
+        addNotification({ type: 'error', text: '⚠️ Authentification échouée' });
         return;
       }
-
     } else {
-      // Case 3: legacy demo messages (no real ciphertext)
-      const legacyDecryptMap = {
-        m3: "Salut ! Comment ça va aujourd'hui ?",
-        m6: "Peux-tu m'envoyer le fichier ?",
-      };
-      plaintext = legacyDecryptMap[msg.id] || 'Message déchiffré avec succès.';
+      plaintext = 'Message déchiffré avec succès.';
     }
 
     decryptMessage(conv.id, msg.id, { text: plaintext, attachment: attachmentObj });
@@ -454,77 +456,105 @@ function ChatDetail({ conv, onBack }) {
   };
 
   return (
-    <div className="absolute inset-0 z-[50] flex flex-col" style={{ backgroundColor: '#050000' }}>
-      {/* Header */}
+    <div className="absolute inset-0 z-[50] flex flex-col overflow-hidden bg-[#050000]">
+      {/* Immersive Plasma Background with Vignette */}
+      <div className="absolute inset-0 opacity-30 pointer-events-none z-0 scale-110">
+        <PlasmaBackground opacity={1} />
+      </div>
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_0%,rgba(5,0,0,0.8)_100%)] pointer-events-none z-1" />
+
+      {/* Header - Holographic Glass */}
       <div
-        className="flex items-center gap-3 px-3 py-2.5 flex-shrink-0"
+        className="relative flex items-center gap-4 px-4 pt-12 pb-5 flex-shrink-0 z-20"
         style={{
-          backgroundColor: 'rgba(5, 0, 0, 0.85)',
-          backdropFilter: 'blur(16px)',
-          borderBottom: '1px solid rgba(255, 0, 60, 0.08)',
+          background: 'linear-gradient(to bottom, rgba(20, 0, 5, 0.8), rgba(5, 0, 0, 0.4))',
+          backdropFilter: 'blur(30px) saturate(150%)',
+          borderBottom: '1px solid rgba(255, 0, 60, 0.2)',
+          boxShadow: '0 4px 30px rgba(0, 0, 0, 0.5)',
         }}
       >
-        <button onClick={onBack} className="text-white/70 hover:text-white transition-colors p-1">
-          <ChevronLeft size={22} />
+        <button onClick={onBack} className="text-white/40 hover:text-[#ff003c] transition-all p-2 -ml-3 active:scale-75">
+          <ChevronLeft size={28} strokeWidth={2.5} />
         </button>
 
-        <Av name={contact.name} size={36} online={contact.online} />
+        <div className="relative group">
+          <Av name={contact.name} size={40} online={contact.online} />
+          <div className="absolute -inset-1 bg-[#ff003c]/20 blur-md rounded-full -z-10 group-hover:opacity-100 opacity-0 transition-opacity" />
+        </div>
 
         <div className="flex-1 min-w-0">
-          <h3 className="text-[15px] font-medium text-white truncate">{contact.name}</h3>
-          <div className="flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
-            <span className="text-[11px]" style={{ color: 'rgba(255,255,255,0.5)' }}>en ligne</span>
+          <h3 className="text-[17px] font-black text-white truncate tracking-tight drop-shadow-[0_0_10px_rgba(255,255,255,0.2)]">
+            {contact.name}
+          </h3>
+          <div className="flex items-center gap-2 -mt-0.5">
+            <div className="w-1.5 h-1.5 rounded-full bg-[#22c55e] animate-[pulse_1.5s_infinite] shadow-[0_0_10px_#22c55e]" />
+            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[#22c55e]/90">Protégé · En Ligne</span>
+            <div className="h-2.5 w-[1px] bg-white/10 mx-1" />
             <BadgeE2E />
           </div>
         </div>
 
-        <button className="text-white/50 hover:text-white transition-colors p-2">
-          <Phone size={18} />
-        </button>
-        <button className="text-white/50 hover:text-white transition-colors p-2">
-          <MoreVertical size={18} />
-        </button>
+        <div className="flex items-center gap-2">
+          <button 
+            onClick={() => initiateCall(contact.id)}
+            className="w-10 h-10 flex items-center justify-center text-white/30 hover:text-white hover:bg-white/5 rounded-full transition-all active:scale-90"
+          >
+            <Phone size={20} />
+          </button>
+          <button className="w-10 h-10 flex items-center justify-center text-white/30 hover:text-white hover:bg-white/5 rounded-full transition-all active:scale-90">
+            <MoreVertical size={20} />
+          </button>
+        </div>
       </div>
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto py-3 space-y-1" style={{ backgroundColor: 'rgba(5, 0, 0, 0.6)' }}>
-        {conv.messages.map((msg) => (
-          <MessageBubble
-            key={msg.id}
-            message={msg}
-            isSent={msg.senderId === 'me'}
-            onDecrypt={() => handleDecrypt(msg)}
-            ttl={messageTtls[msg.id] !== undefined ? messageTtls[msg.id] : msg.ttl}
-            isVanishing={vanishingIdsRef.current.has(msg.id)}
-          />
-        ))}
+      {/* Messages - Floating List */}
+      <div className="relative flex-1 overflow-y-auto pt-8 pb-4 space-y-4 z-10 custom-scrollbar">
+        {conv.messages.length === 0 ? (
+          <div className="h-full flex flex-col items-center justify-center opacity-20">
+            <div className="w-16 h-16 rounded-full border border-dashed border-[#ff003c] flex items-center justify-center mb-4">
+              <Lock size={24} className="text-[#ff003c]" />
+            </div>
+            <p className="text-[11px] font-black uppercase tracking-[0.4em] text-[#ff003c]">Canal Sécurisé</p>
+          </div>
+        ) : (
+          conv.messages.map((msg) => (
+            <MessageBubble
+              key={msg.id}
+              message={msg}
+              isSent={msg.senderId === 'me'}
+              onDecrypt={() => handleDecrypt(msg)}
+              ttl={messageTtls[msg.id] !== undefined ? messageTtls[msg.id] : msg.ttl}
+              isVanishing={vanishingIdsRef.current.has(msg.id)}
+            />
+          ))
+        )}
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input */}
-      <div className="relative flex-shrink-0 pb-24 pt-3 px-4 z-50">
-        <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/80 to-transparent pointer-events-none" />
-        
-        <div className="relative">
+      {/* Input Area - The "Blade" */}
+      <div className="relative flex-shrink-0 pb-12 pt-4 px-4 z-20">
+        <div className="relative w-full mx-auto">
           {attachment && (
-            <div className="absolute bottom-full left-4 mb-2 p-2 rounded-xl bg-black/80 backdrop-blur-md border border-[#ff003c]/20 flex items-center gap-3 w-64 shadow-2xl">
-              {attachment.type.startsWith('image/') ? (
-                <img src={attachment.url} alt="preview" className="w-12 h-12 object-cover rounded-md" />
-              ) : (
-                <div className="w-12 h-12 flex items-center justify-center bg-white/5 rounded-md text-[#ff003c]">
-                  <FileText size={20} />
+            <div className="absolute bottom-full left-0 right-0 mb-6 animate-in zoom-in-95 fade-in duration-300">
+              <div className="mx-auto p-2 rounded-2xl bg-black/80 backdrop-blur-3xl border border-[#ff003c]/40 flex items-center gap-4 w-fit max-w-full shadow-[0_20px_50px_rgba(0,0,0,0.9)]">
+                {attachment.type.startsWith('image/') ? (
+                  <img src={attachment.url} alt="preview" className="w-16 h-16 object-cover rounded-xl border border-white/10" />
+                ) : (
+                  <div className="w-16 h-16 flex items-center justify-center bg-[#ff003c]/20 rounded-xl text-[#ff003c]">
+                    <FileText size={28} />
+                  </div>
+                )}
+                <div className="pr-6">
+                  <p className="text-[13px] font-bold text-white tracking-tight truncate max-w-[200px]">{attachment.name}</p>
+                  <p className="text-[10px] text-[#ff003c] font-black uppercase tracking-widest mt-0.5">Fichier Prêt</p>
                 </div>
-              )}
-              <div className="flex-1 min-w-0 pr-4">
-                <p className="text-[12px] text-white/90 truncate">{attachment.name}</p>
+                <button 
+                  onClick={() => setAttachment(null)} 
+                  className="w-8 h-8 bg-[#ff003c] text-white rounded-full flex items-center justify-center hover:scale-110 active:scale-90 transition-all shadow-[0_0_15px_rgba(255,0,60,0.5)]"
+                >
+                  <X size={16} />
+                </button>
               </div>
-              <button 
-                onClick={() => setAttachment(null)} 
-                className="absolute -top-2 -right-2 bg-[#ff003c] text-white p-1 rounded-full shadow-lg hover:scale-110 transition-transform active:scale-95"
-              >
-                <X size={12} />
-              </button>
             </div>
           )}
 
@@ -538,27 +568,28 @@ function ChatDetail({ conv, onBack }) {
             />
           ) : (
             <div
-              className="flex items-end gap-2 px-2 py-1.5 rounded-[24px] backdrop-blur-2xl transition-all"
+              className="flex items-center gap-3 p-2.5 rounded-[32px] transition-all duration-500"
               style={{
-                backgroundColor: 'rgba(25, 0, 10, 0.45)',
-                border: '1px solid rgba(255, 0, 60, 0.2)',
-                boxShadow: '0 8px 32px rgba(0,0,0,0.5), inset 0 1px 2px rgba(255,255,255,0.05)',
+                backgroundColor: 'rgba(255, 255, 255, 0.02)',
+                border: '1px solid rgba(255, 0, 60, 0.25)',
+                backdropFilter: 'blur(40px)',
+                boxShadow: '0 20px 60px rgba(0,0,0,0.8), inset 0 1px 1px rgba(255,255,255,0.05)',
               }}
             >
               <button
                 onClick={() => setShowMedia(!showMedia)}
-                className={`flex-shrink-0 p-2.5 rounded-full transition-all active:scale-95 ${showMedia ? 'bg-[#ff003c] text-white shadow-[0_0_12px_rgba(255,0,60,0.5)]' : 'text-white/50 hover:text-[#ff003c]'}`}
+                className={`w-12 h-12 flex items-center justify-center rounded-full transition-all active:scale-90 ${showMedia ? 'bg-[#ff003c] text-white shadow-[0_0_20px_rgba(255,0,60,0.6)]' : 'bg-white/5 text-white/40 hover:text-white'}`}
               >
-                <Plus size={22} className={showMedia ? 'rotate-45 transition-transform' : 'transition-transform'} />
+                <Plus size={24} className={showMedia ? 'rotate-45 transition-transform' : 'transition-transform'} />
               </button>
 
               <textarea
                 value={messageText}
-                onChange={(e) => setMessageText(e.target.value.slice(0, 500))}
-                placeholder="Message sécurisé..."
+                onChange={(e) => setMessageText(e.target.value)}
+                placeholder="Écrire un message chiffré..."
                 rows={1}
-                className="flex-1 bg-transparent text-[15px] font-medium text-white placeholder:text-white/30 outline-none resize-none py-3"
-                style={{ minHeight: 44, maxHeight: 120 }}
+                className="flex-1 bg-transparent text-[16px] text-white placeholder:text-white/20 outline-none resize-none py-3 px-2 font-medium"
+                style={{ minHeight: 48, maxHeight: 180 }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
@@ -567,32 +598,34 @@ function ChatDetail({ conv, onBack }) {
                 }}
               />
 
-              {messageText.trim() || attachment ? (
-                <button
-                  onClick={handleSend}
-                  className="flex-shrink-0 flex items-center justify-center rounded-full transition-transform active:scale-90 mb-1 mr-1"
-                  style={{ width: 36, height: 36, backgroundColor: '#ff003c', boxShadow: '0 0 12px rgba(255,0,60,0.5)' }}
-                >
-                  <Send size={16} className="text-white ml-0.5" />
-                </button>
-              ) : (
-                <button
-                  onClick={() => setRecording(true)}
-                  className="flex-shrink-0 p-2.5 text-white/50 hover:text-[#ff003c] transition-all active:scale-95 mb-0.5 mr-0.5"
-                >
-                  <Mic size={22} />
-                </button>
-              )}
+              <div className="flex items-center gap-2 mr-1">
+                {!messageText.trim() && !attachment ? (
+                  <button
+                    onClick={() => setRecording(true)}
+                    className="w-12 h-12 flex items-center justify-center rounded-full bg-white/5 text-white/40 hover:text-white transition-all active:scale-90"
+                  >
+                    <Mic size={24} />
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleSend}
+                    className="w-12 h-12 flex items-center justify-center rounded-full bg-[#ff003c] text-white shadow-[0_8px_25px_rgba(255,0,60,0.5)] hover:scale-105 active:scale-90 transition-all"
+                  >
+                    <Send size={20} className="ml-1" />
+                  </button>
+                )}
+              </div>
             </div>
           )}
 
-          {messageText.trim() && (
-            <div className="absolute -top-6 left-0 right-0 text-center animate-pulse">
-              <span className="text-[10px] uppercase font-bold tracking-widest bg-black/40 px-3 py-1 rounded-full border border-[rgba(255,0,60,0.2)]" style={{ color: '#ff003c', textShadow: '0 0 8px rgba(255,0,60,0.5)' }}>
-                🔒 Signal · a1b2c3d4
-              </span>
+          {/* Crypto Integrity Footer */}
+          <div className="mt-4 flex justify-between items-center px-6 opacity-30">
+            <div className="flex items-center gap-2">
+              <ShieldCheck size={12} className="text-[#ff003c]" />
+              <span className="text-[9px] font-black uppercase tracking-[0.2em] text-white">E2E Enforced</span>
             </div>
-          )}
+            <span className="text-[9px] font-mono text-white/50">DR-SESSION: {conv.id.slice(-8).toUpperCase()}</span>
+          </div>
         </div>
       </div>
     </div>
@@ -603,7 +636,8 @@ function ChatDetail({ conv, onBack }) {
 // Main Chats Screen
 // ============================================
 export default function ChatsScreen() {
-  const { conversations, activeChatId, setActiveChat, closeChat, toggleUser, currentUser, contacts } = useApp();
+  const { conversations, activeChatId, setActiveChat, closeChat, toggleUser, currentUser, contacts, createConversation } = useApp();
+  const { initiateCall } = useWebRTC();
   const [showNewMessage, setShowNewMessage] = useState(false);
 
   const activeConv = conversations.find((c) => c.id === activeChatId);
@@ -618,10 +652,13 @@ export default function ChatsScreen() {
         onClose={() => setShowNewMessage(false)}
         onStartChat={(contactId) => {
           setShowNewMessage(false);
-          // Find or create conversation
           const existing = conversations.find((c) => c.contactId === contactId);
           if (existing) {
             setActiveChat(existing.id);
+          } else {
+            // Create new conversation and immediately set it as active
+            const newId = createConversation(contactId);
+            setActiveChat(newId);
           }
         }}
       />
@@ -632,7 +669,7 @@ export default function ChatsScreen() {
     <div className="h-full flex flex-col bg-black/40">
       {/* Header */}
       <div
-        className="flex items-center justify-between px-4 py-3 flex-shrink-0 z-20"
+        className="flex items-center justify-between px-4 pt-12 pb-5 flex-shrink-0 z-20"
         style={{
           backgroundColor: 'rgba(8, 0, 4, 0.75)',
           backdropFilter: 'blur(20px)',
@@ -656,7 +693,7 @@ export default function ChatsScreen() {
             style={{ backgroundColor: 'rgba(255, 0, 60, 0.1)', color: '#ff003c', border: '1px solid rgba(255,0,60,0.2)' }}
           >
             <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: '#ff003c', boxShadow: '0 0 6px #ff003c' }} />
-            {currentUser.name}
+            {currentUser?.name || 'Chargement...'}
           </button>
 
           <button

@@ -1,44 +1,35 @@
 import { useEffect, useState, useCallback } from 'react';
-import { 
-  Camera, 
-  CameraResult, 
-  CameraSource,
-  PushNotifications,
-  LocalNotifications,
-  LocalNotificationSchema,
-  Filesystem,
-  Directory,
-  StatusBar,
-  Keyboard,
-  SplashScreen
-} from '@capacitor/plugin';
 
 // ── Camera Hook ────────────────────────────────────────────────────────
 
 export function useCamera() {
   const [hasPermission, setHasPermission] = useState(false);
-  const [isSupported, setIsSupported] = useState(false);
+  const [isSupported] = useState(false);
 
   useEffect(() => {
-    Camera.checkPermissions().then((result) => {
-      setHasPermission(result.camera === 'granted');
+    import('@capacitor/camera').then((CameraModule) => {
+      const Camera = (CameraModule as { Camera?: unknown }).Camera || CameraModule.default;
+      if (!Camera) return;
+      
+      (Camera as { checkPermissions?: () => Promise<{ camera?: string }> })?.checkPermissions?.().then((result) => {
+        setHasPermission(result?.camera === 'granted');
+      }).catch(() => {});
     }).catch(() => {});
-
-    Camera.isAvailable().then(() => {
-      setIsSupported(true);
-    }).catch(() => {
-      setIsSupported(false);
-    });
   }, []);
 
   const requestPermission = useCallback(async () => {
-    const result = await Camera.requestPermissions();
-    setHasPermission(result.camera === 'granted');
-    return result.camera === 'granted';
+    const CameraModule = await import('@capacitor/camera');
+    const Camera = (CameraModule as { Camera?: unknown }).Camera || CameraModule.default;
+    if (!Camera) return false;
+    
+    const result = await (Camera as { requestPermissions?: () => Promise<{ camera?: string }> })?.requestPermissions?.();
+    const granted = result?.camera === 'granted';
+    setHasPermission(granted);
+    return granted;
   }, []);
 
   const takePicture = useCallback(async (options?: {
-    source?: CameraSource;
+    source?: string;
     quality?: number;
     width?: number;
     height?: number;
@@ -49,7 +40,11 @@ export function useCamera() {
     }
 
     try {
-      const result: CameraResult = await Camera.getPhoto({
+      const CameraModule = await import('@capacitor/camera');
+      const Camera = (CameraModule as { Camera?: unknown }).Camera || CameraModule.default;
+      if (!Camera) return null;
+      
+      const result = await (Camera as { getPhoto?: (opts: Record<string, unknown>) => Promise<{ webPath?: string; path?: string }> })?.getPhoto?.({
         source: options?.source || 'camera',
         quality: options?.quality || 85,
         width: options?.width || 1280,
@@ -58,9 +53,8 @@ export function useCamera() {
         correctOrientation: true
       });
 
-      return result.webPath || result.path;
-    } catch (e) {
-      console.error('Camera error:', e);
+      return result?.webPath || result?.path || null;
+    } catch {
       return null;
     }
   }, [hasPermission, requestPermission]);
@@ -68,55 +62,41 @@ export function useCamera() {
   return { hasPermission, isSupported, requestPermission, takePicture };
 }
 
-// ── Push Notifications Hook ─────────────────────────────────────────────
+// ── Push Notifications Hook ─────────────────────────────────────────
 
 export function usePushNotifications() {
-  const [token, setToken] = useState<string | null>(null);
-  const [permission, setPermission] = useState<'granted' | 'denied' | 'prompt'>('prompt');
+  const [permission, setPermission] = useState<string>('prompt');
 
   useEffect(() => {
-    // Get current permission status
-    PushNotifications.checkPermissions().then((result) => {
-      setPermission(result.receive as 'granted' | 'denied' | 'prompt');
+    import('@capacitor/push-notifications').then(async (Module) => {
+      const PushNotifications = (Module as { PushNotifications?: unknown }).PushNotifications || Module.default;
+      if (!PushNotifications) return;
+      
+      const result = await (PushNotifications as { checkPermissions?: () => Promise<{ receive?: string }> })?.checkPermissions?.();
+      if (result) setPermission(result.receive || 'prompt');
     }).catch(() => {});
-
-    // Register for push tokens
-    PushNotifications.register().then(() => {
-      console.log('Push notifications registered');
-    }).catch((e) => {
-      console.error('Push registration error:', e);
-    });
-
-    // Listen for token
-    const removeListener = PushNotifications.addListener('pushNotificationTokenReceived', 
-      (event) => {
-        setToken(event.token);
-        console.log('Push token:', event.token);
-      }
-    );
-
-    // Listen for notifications
-    const removeNotificationListener = PushNotifications.addListener(
-      'pushNotificationReceived', 
-      (event) => {
-        console.log('Push received:', event);
-        // Handle received notification
-      }
-    );
-
-    return () => {
-      removeListener.remove();
-      removeNotificationListener.remove();
-    };
   }, []);
 
   const requestPermission = useCallback(async () => {
-    const result = await PushNotifications.requestPermissions();
-    setPermission(result.receive as 'granted' | 'denied' | 'prompt');
-    return result.receive === 'granted';
+    const Module = await import('@capacitor/push-notifications');
+    const PushNotifications = (Module as { PushNotifications?: unknown }).PushNotifications || Module.default;
+    if (!PushNotifications) return false;
+    
+    const result = await (PushNotifications as { requestPermissions?: () => Promise<{ receive?: string }> })?.requestPermissions?.();
+    const granted = result?.receive === 'granted';
+    setPermission(granted ? 'granted' : 'denied');
+    return granted;
   }, []);
 
-  return { token, permission, requestPermission };
+  const register = useCallback(async () => {
+    const Module = await import('@capacitor/push-notifications');
+    const PushNotifications = (Module as { PushNotifications?: unknown }).PushNotifications || Module.default;
+    if (PushNotifications && (PushNotifications as { register?: () => Promise<void> })?.register) {
+      await (PushNotifications as { register: () => Promise<void> }).register();
+    }
+  }, []);
+
+  return { token: null, permission, requestPermission, register };
 }
 
 // ── Local Notifications Hook ────────────────────────────────────────────
@@ -125,136 +105,215 @@ export function useLocalNotifications() {
   const [permission, setPermission] = useState(false);
 
   useEffect(() => {
-    LocalNotifications.checkPermissions().then((result) => {
-      setPermission(result.display === 'granted');
+    import('@capacitor/local-notifications').then(async (Module) => {
+      const LocalNotifications = (Module as { LocalNotifications?: unknown }).LocalNotifications || Module.default;
+      if (!LocalNotifications) return;
+      
+      const result = await (LocalNotifications as { checkPermissions?: () => Promise<{ display?: string }> })?.checkPermissions?.();
+      setPermission(result?.display === 'granted');
     }).catch(() => {});
   }, []);
 
   const requestPermission = useCallback(async () => {
-    const result = await LocalNotifications.requestPermissions();
-    setPermission(result.display === 'granted');
-    return result.display === 'granted';
+    const Module = await import('@capacitor/local-notifications');
+    const LocalNotifications = (Module as { LocalNotifications?: unknown }).LocalNotifications || Module.default;
+    if (!LocalNotifications) return false;
+    
+    const result = await (LocalNotifications as { requestPermissions?: () => Promise<{ display?: string }> })?.requestPermissions?.();
+    const granted = result?.display === 'granted';
+    setPermission(granted);
+    return granted;
   }, []);
 
   const scheduleNotification = useCallback(async (
     id: number,
     title: string,
     body: string,
-    schedule?: { at: Date }
-  ) => {
-    const notification: LocalNotificationSchema = {
-      id,
-      title,
-      body,
-      schedule
-    };
+    scheduleAt?: number
+  ): Promise<boolean> => {
+    if (!permission) {
+      const granted = await requestPermission();
+      if (!granted) return false;
+    }
 
-    await LocalNotifications.schedule({
-      notifications: [notification]
-    });
+    try {
+      const Module = await import('@capacitor/local-notifications');
+      const LocalNotifications = (Module as { LocalNotifications?: unknown }).LocalNotifications || Module.default;
+      if (!LocalNotifications) return false;
+      
+      const notification: Record<string, unknown> = {
+        id,
+        title,
+        body,
+      };
+      if (scheduleAt) {
+        notification.schedule = { at: new Date(scheduleAt) };
+      }
+      await (LocalNotifications as { schedule?: (opts: { notifications: Record<string, unknown>[] }) => Promise<void> })?.schedule?.({ notifications: [notification] });
+      return true;
+    } catch {
+      return false;
+    }
+  }, [permission, requestPermission]);
+
+  const cancelNotification = useCallback(async (id: number) => {
+    const Module = await import('@capacitor/local-notifications');
+    const LocalNotifications = (Module as { LocalNotifications?: unknown }).LocalNotifications || Module.default;
+    if (LocalNotifications && (LocalNotifications as { cancel?: (opts: { notifications: { id: number }[] }) => Promise<void> })?.cancel) {
+      await (LocalNotifications as { cancel: (opts: { notifications: { id: number }[] }) => Promise<void> }).cancel({ notifications: [{ id }] });
+    }
   }, []);
 
-  return { permission, requestPermission, scheduleNotification };
+  return { permission, requestPermission, scheduleNotification, cancelNotification };
 }
 
-// ── File System Hook ─────────────────────────────────────────────────────
-
-export function useFileSystem() {
-  const writeFile = useCallback(async (path: string, data: string, encoding: 'utf8' | 'base64' = 'utf8') => {
-    await Filesystem.writeFile({
-      path,
-      data,
-      encoding,
-      directory: Directory.Documents
-    });
-  }, []);
-
-  const readFile = useCallback(async (path: string, encoding: 'utf8' | 'base64' = 'utf8') => {
-    const result = await Filesystem.readFile({
-      path,
-      encoding,
-      directory: Directory.Documents
-    });
-    return result.data;
-  }, []);
-
-  const deleteFile = useCallback(async (path: string) => {
-    await Filesystem.deleteFile({
-      path,
-      directory: Directory.Documents
-    });
-  }, []);
-
-  return { writeFile, readFile, deleteFile };
-}
-
-// ── Status Bar Hook ─────────────────────────────────────────────────
+// ── Status Bar Hook ────────────────────────────────────────────────────────
 
 export function useStatusBar() {
-  const setStyle = useCallback(async (style: 'light' | 'dark' | 'default') => {
-    await StatusBar.setStyle({ style });
+  const setStyle = useCallback(async (style: string) => {
+    const Module = await import('@capacitor/status-bar');
+    const StatusBar = (Module as { StatusBar?: unknown }).StatusBar || Module.default;
+    if (StatusBar && (StatusBar as { setStyle?: (opts: { style: string }) => Promise<void> })?.setStyle) {
+      await (StatusBar as { setStyle: (opts: { style: string }) => Promise<void> }).setStyle({ style });
+    }
   }, []);
 
   const setBackgroundColor = useCallback(async (color: string) => {
-    await StatusBar.setBackgroundColor({ color });
-  }, []);
-
-  const hide = useCallback(async () => {
-    await StatusBar.hide();
+    const Module = await import('@capacitor/status-bar');
+    const StatusBar = (Module as { StatusBar?: unknown }).StatusBar || Module.default;
+    if (StatusBar && (StatusBar as { setBackgroundColor?: (opts: { color: string }) => Promise<void> })?.setBackgroundColor) {
+      await (StatusBar as { setBackgroundColor: (opts: { color: string }) => Promise<void> }).setBackgroundColor({ color });
+    }
   }, []);
 
   const show = useCallback(async () => {
-    await StatusBar.show();
+    const Module = await import('@capacitor/status-bar');
+    const StatusBar = (Module as { StatusBar?: unknown }).StatusBar || Module.default;
+    if (StatusBar && (StatusBar as { show?: () => Promise<void> })?.show) {
+      await (StatusBar as { show: () => Promise<void> }).show();
+    }
   }, []);
 
-  return { setStyle, setBackgroundColor, hide, show };
+  const hide = useCallback(async () => {
+    const Module = await import('@capacitor/status-bar');
+    const StatusBar = (Module as { StatusBar?: unknown }).StatusBar || Module.default;
+    if (StatusBar && (StatusBar as { hide?: () => Promise<void> })?.hide) {
+      await (StatusBar as { hide: () => Promise<void> }).hide();
+    }
+  }, []);
+
+  return { setStyle, setBackgroundColor, show, hide };
 }
 
-// ── Keyboard Hook ───────────────────────────────────────────────────
+// ── Keyboard Hook ────────────────────────────────────────────────────────
 
 export function useKeyboard() {
   const [isVisible, setIsVisible] = useState(false);
 
   useEffect(() => {
-    const showListener = Keyboard.addListener('keyboardWillShow', () => {
-      setIsVisible(true);
-    });
-    
-    const hideListener = Keyboard.addListener('keyboardWillHide', () => {
-      setIsVisible(false);
-    });
-
-    return () => {
-      showListener.remove();
-      hideListener.remove();
+    const checkVisibility = () => {
+      const keyboardVisible = window.visualViewport?.height 
+        ? window.innerHeight - window.visualViewport.height > 100
+        : false;
+      setIsVisible(keyboardVisible);
     };
-  }, []);
-
-  return isVisible;
-}
-
-// ── Splash Screen Hook ───────────────────────────────────────────────
-
-export function useSplashScreen() {
-  const hide = useCallback(async () => {
-    await SplashScreen.hide();
+    
+    window.addEventListener('resize', checkVisibility);
+    return () => window.removeEventListener('resize', checkVisibility);
   }, []);
 
   const show = useCallback(async () => {
-    await SplashScreen.show();
+    const Module = await import('@capacitor/keyboard');
+    const Keyboard = (Module as unknown as { Keyboard?: { show?: () => Promise<void> } }).Keyboard;
+    if (Keyboard?.show) {
+      await Keyboard.show();
+    }
+  }, []);
+
+  const hide = useCallback(async () => {
+    const Module = await import('@capacitor/keyboard');
+    const Keyboard = (Module as unknown as { Keyboard?: { hide?: () => Promise<void> } }).Keyboard;
+    if (Keyboard?.hide) {
+      await Keyboard.hide();
+    }
+  }, []);
+
+  return { isVisible, show, hide };
+}
+
+// ── Splash Screen Hook ────────────────────────────────────────────────
+
+export function useSplashScreen() {
+  const hide = useCallback(async () => {
+    const Module = await import('@capacitor/splash-screen');
+    const SplashScreen = (Module as { SplashScreen?: unknown }).SplashScreen || Module.default;
+    if (SplashScreen && (SplashScreen as { hide?: () => Promise<void> })?.hide) {
+      await (SplashScreen as { hide: () => Promise<void> }).hide();
+    }
+  }, []);
+
+  const show = useCallback(async () => {
+    const Module = await import('@capacitor/splash-screen');
+    const SplashScreen = (Module as { SplashScreen?: unknown }).SplashScreen || Module.default;
+    if (SplashScreen && (SplashScreen as { show?: () => Promise<void> })?.show) {
+      await (SplashScreen as { show: () => Promise<void> }).show();
+    }
   }, []);
 
   return { hide, show };
 }
 
-// ── Export all hooks ──────────────────────────────────────────���─��───
+// ── File System Hook ─��───────────────────────────────────────────────
 
-export default {
-  useCamera,
-  usePushNotifications,
-  useLocalNotifications,
-  useFileSystem,
-  useStatusBar,
-  useKeyboard,
-  useSplashScreen
-};
+export function useFileSystem() {
+  const writeFile = useCallback(async (
+    path: string,
+    data: string,
+    directory: string = 'Data'
+  ): Promise<boolean> => {
+    try {
+      const Module = await import('@capacitor/filesystem');
+      const Filesystem = (Module as { Filesystem?: unknown }).Filesystem || Module.default;
+      if (!Filesystem || !(Filesystem as { writeFile?: (opts: { path: string; data: string; directory: string }) => Promise<void> })?.writeFile) return false;
+      
+      await (Filesystem as { writeFile: (opts: { path: string; data: string; directory: string }) => Promise<void> }).writeFile({ path, data, directory });
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  const readFile = useCallback(async (
+    path: string,
+    directory: string = 'Data'
+  ): Promise<string | null> => {
+    try {
+      const Module = await import('@capacitor/filesystem');
+      const Filesystem = (Module as { Filesystem?: unknown }).Filesystem || Module.default;
+      if (!Filesystem || !(Filesystem as { readFile?: (opts: { path: string; directory: string }) => Promise<{ data: string }> })?.readFile) return null;
+      
+      const result = await (Filesystem as { readFile: (opts: { path: string; directory: string }) => Promise<{ data: string }> }).readFile({ path, directory });
+      return result?.data || null;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const deleteFile = useCallback(async (
+    path: string,
+    directory: string = 'Data'
+  ): Promise<boolean> => {
+    try {
+      const Module = await import('@capacitor/filesystem');
+      const Filesystem = (Module as { Filesystem?: unknown }).Filesystem || Module.default;
+      if (!Filesystem || !(Filesystem as { deleteFile?: (opts: { path: string; directory: string }) => Promise<void> })?.deleteFile) return false;
+      
+      await (Filesystem as { deleteFile: (opts: { path: string; directory: string }) => Promise<void> }).deleteFile({ path, directory });
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  return { writeFile, readFile, deleteFile };
+}
