@@ -58,7 +58,24 @@ You must configure the following in your Supabase project:
 npm install
 npm run dev
 ```
-The app will be available at `http://localhost:5173`.
+The app will be available at `http://localhost:3000`.
+
+## 🚢 Production Deployment (Vercel)
+
+Vanish is optimized for deployment on Vercel. Because this is an E2EE app with external storage, you **must** follow these steps to ensure authentication and attachments work.
+
+### 1. Vercel Configuration
+1.  Connect your GitHub repository to Vercel.
+2.  Add Environment Variables:
+    *   `VITE_SUPABASE_URL`
+    *   `VITE_SUPABASE_ANON_KEY`
+3.  Deploy. Vercel will use the `vercel.json` rewrite rule to handle SPA routing.
+
+### 2. Supabase "Trust" Setup
+Supabase will block logins and storage downloads from your new domain until you authorize it:
+1.  **Auth Redirects**: Go to `Auth -> URL Configuration`. Set the **Site URL** to your Vercel URL. Add `https://your-app.vercel.app/**` to **Redirect URIs**.
+2.  **CORS**: Go to `Storage -> Settings`. Add your Vercel URL to the **Allowed Origins** list. This allows the browser to download encrypted blobs for local decryption.
+3.  **Google OAuth**: Ensure your Google Cloud Console "Authorized Redirect URIs" matches the callback URL in the Supabase Google Provider settings.
 
 ## 🤝 Contribution Rules
 
