@@ -14,6 +14,7 @@ import MediaTray from '@/components/MediaTray';
 import VoiceRecorder from '@/components/VoiceRecorder';
 import PlasmaBackground from '@/components/PlasmaBackground';
 import { encryptMessage, decryptPayload } from '@/crypto/sessionManager';
+import { encryptAndUpload, downloadAndDecrypt, deleteBlob } from '@/crypto/blobStorage';
 
 function ConversationRow({ conv, onClick, onDelete, isLast, contacts, groups }) {
   const hasUnread = conv.unreadCount > 0;
@@ -97,6 +98,14 @@ function ConversationRow({ conv, onClick, onDelete, isLast, contacts, groups }) 
 function MessageBubble({ message, isSent, onDecrypt, ttl, isVanishing }) {
   const [glitching, setGlitching] = useState(false);
 
+  // Revoke blob:// URLs when the bubble is unmounted (TTL expiry / deletion)
+  // to prevent memory leaks from decrypted attachment blobs.
+  useEffect(() => {
+    const url = message.attachment?.url;
+    if (!url || !url.startsWith('blob:')) return;
+    return () => URL.revokeObjectURL(url);
+  }, [message.attachment?.url]);
+
   const handleTap = () => {
     if (message.locked) {
       setGlitching(true);
@@ -105,6 +114,39 @@ function MessageBubble({ message, isSent, onDecrypt, ttl, isVanishing }) {
         onDecrypt();
       }, 200);
     }
+  };
+
+  // Render the attachment media. For encrypted attachments that are still
+  // being downloaded (url not yet resolved to blob://), show a spinner.
+  const renderAttachment = () => {
+    const att = message.attachment;
+    if (!att) return null;
+
+    // Downloading state: encrypted ref with no blob URL yet
+    const isDownloading = att.encrypted && !att.url?.startsWith('blob:') && !att.url?.startsWith('data:');
+    if (isDownloading) {
+      return (
+        <div className="mb-2.5 rounded-xl overflow-hidden border border-white/10 flex items-center justify-center gap-3 p-4 bg-white/5 min-h-[64px]">
+          <div className="w-5 h-5 rounded-full border-2 border-[#ff003c] border-t-transparent animate-spin" />
+          <span className="text-[12px] text-white/40 font-medium">{att.name || 'Téléchargement...'}</span>
+        </div>
+      );
+    }
+
+    return (
+      <div className="mb-2.5 rounded-xl overflow-hidden border border-white/10 shadow-inner">
+        {att.type?.startsWith('image/') ? (
+          <img src={att.url} alt="attachment" className="w-full max-h-[260px] object-cover" />
+        ) : att.type?.startsWith('video/') ? (
+          <video src={att.url} controls className="w-full max-h-[260px] bg-black" />
+        ) : (
+          <div className="flex items-center gap-3 p-4 bg-white/5">
+            <FileText size={20} className="text-[#ff003c]" />
+            <span className="text-[13px] font-medium truncate">{att.name}</span>
+          </div>
+        )}
+      </div>
+    );
   };
 
   return (
@@ -145,20 +187,7 @@ function MessageBubble({ message, isSent, onDecrypt, ttl, isVanishing }) {
             </div>
           ) : (
             <>
-              {message.attachment && (
-                <div className="mb-2.5 rounded-xl overflow-hidden border border-white/10 shadow-inner">
-                  {message.attachment.type.startsWith('image/') ? (
-                    <img src={message.attachment.url} alt="attachment" className="w-full max-h-[260px] object-cover" />
-                  ) : message.attachment.type.startsWith('video/') ? (
-                    <video src={message.attachment.url} controls className="w-full max-h-[260px] bg-black" />
-                  ) : (
-                    <div className="flex items-center gap-3 p-4 bg-white/5">
-                      <FileText size={20} className="text-[#ff003c]" />
-                      <span className="text-[13px] font-medium truncate">{message.attachment.name}</span>
-                    </div>
-                  )}
-                </div>
-              )}
+              {renderAttachment()}
               {message.text && (
                 <p className="text-[15px] leading-relaxed tracking-tight">{message.text}</p>
               )}
@@ -454,21 +483,24 @@ function ChatDetail({ conv, onBack }) {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (file.size > 5 * 1024 * 1024) {
-      addNotification({ type: 'error', text: '⚠️ Fichier trop lourd (max 5 Mo)' });
+    // Raised from 5MB to 50MB — large files are now encrypted and uploaded
+    // to Supabase Storage rather than embedded in the WebSocket payload.
+    if (file.size > 50 * 1024 * 1024) {
+      addNotification({ type: 'error', text: '⚠️ Fichier trop lourd (max 50 Mo)' });
       e.target.value = '';
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      setAttachment({
-        url: event.target.result,
-        type: file.type,
-        name: file.name,
-      });
-    };
-    reader.readAsDataURL(file);
+    // Store the raw File object — we no longer base64-encode here.
+    // A local blob:// URL is created for the preview only; it is never sent.
+    const previewUrl = URL.createObjectURL(file);
+    setAttachment({
+      file,                // raw File — used by encryptAndUpload at send time
+      url: previewUrl,     // local blob:// for preview thumbnail only
+      type: file.type,
+      name: file.name,
+      size: file.size,
+    });
     e.target.value = '';
   };
 
@@ -482,10 +514,37 @@ function ChatDetail({ conv, onBack }) {
     if (!acquireSendLock(lockKey)) return;
 
     try {
-      let plaintext = messageText.trim();
-      if (attachment) {
-        plaintext = JSON.stringify({ text: plaintext, attachment });
+      // ── Encrypted Blob Upload ─────────────────────────────────────────
+      // If there is an attachment, encrypt it locally and upload the
+      // ciphertext to Supabase Storage BEFORE the ratchet encrypt step.
+      // The returned ref (~500 bytes) replaces the raw base64 blob in the
+      // Double Ratchet plaintext, keeping the WebSocket payload tiny.
+      let attachmentRef = null;
+      if (attachment?.file) {
+        try {
+          attachmentRef = await encryptAndUpload(
+            attachment.file,
+            conv.id,
+            currentUser.id
+          );
+        } catch (e) {
+          console.error('[Chat] Blob upload error:', e);
+          addNotification({ type: 'error', text: '⚠️ Échec du téléversement: ' + (e?.message || 'Erreur inconnue') });
+          return;
+        }
       }
+
+      let plaintext = messageText.trim();
+      if (attachmentRef) {
+        // Embed only the small encrypted ref — not the raw file bytes
+        plaintext = JSON.stringify({ text: plaintext, attachment: attachmentRef });
+      }
+
+      // Local display copy uses the preview URL (blob://) so the sender
+      // sees the image immediately without waiting for a re-download.
+      const localAttachment = attachmentRef
+        ? { ...attachmentRef, url: attachment.url }
+        : null;
 
       if (conv.isGroup) {
         // ── Group path ──────────────────────────────────────────────
@@ -494,7 +553,7 @@ function ChatDetail({ conv, onBack }) {
         // in context would double-advance the ratchet and break decryption.
         await sendGroupMessage(conv.id, plaintext, {
           text: messageText.trim(),
-          attachment,
+          attachment: localAttachment,
         });
       } else {
         // ── 1:1 path ──────────────────────────────────────────────
@@ -511,7 +570,7 @@ function ChatDetail({ conv, onBack }) {
           id: `msg-${Date.now()}-${Array.from(crypto.getRandomValues(new Uint8Array(4)), b => b.toString(16).padStart(2, '0')).join('')}`,
           senderId: 'me',
           text: messageText.trim(),
-          attachment,
+          attachment: localAttachment,
           time: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
           isRead: false,
           ttl: 0,
@@ -523,6 +582,8 @@ function ChatDetail({ conv, onBack }) {
 
       Haptics.impact({ style: ImpactStyle.Medium }).catch(() => {});
       setMessageText('');
+      // Revoke the local preview blob URL now that the message is sent
+      if (attachment?.url?.startsWith('blob:')) URL.revokeObjectURL(attachment.url);
       setAttachment(null);
     } finally {
       releaseSendLock(lockKey);
@@ -575,6 +636,32 @@ function ChatDetail({ conv, onBack }) {
       }
     } else {
       plaintext = 'Message déchiffré avec succès.';
+    }
+
+    // ── Encrypted Blob Download ───────────────────────────────────────
+    // If the attachment is an encrypted Storage ref (not a local blob://
+    // or legacy data: URL), download and decrypt it now. The resulting
+    // blob:// URL is embedded in attachmentObj so MessageBubble can
+    // render it immediately via <img> or <video>.
+    if (attachmentObj?.encrypted === true) {
+      try {
+        // Show downloading state immediately — MessageBubble will render
+        // a spinner while url is still the https:// Storage URL.
+        decryptMessage(conv.id, msg.id, { text: plaintext, attachment: attachmentObj });
+        setMessageTtls((prev) => ({ ...prev, [msg.id]: 180 }));
+
+        const blobUrl = await downloadAndDecrypt(attachmentObj);
+        // Patch the message with the resolved blob:// URL
+        decryptMessage(conv.id, msg.id, {
+          text: plaintext,
+          attachment: { ...attachmentObj, originalUrl: attachmentObj.url, url: blobUrl },
+        });
+        return; // already dispatched above
+      } catch (e) {
+        console.error('[Chat] Blob decrypt error:', e);
+        addNotification({ type: 'error', text: '⚠️ Échec du déchiffrement de la pièce jointe' });
+        // Fall through with attachmentObj as-is (url shows error state)
+      }
     }
 
     decryptMessage(conv.id, msg.id, { text: plaintext, attachment: attachmentObj });

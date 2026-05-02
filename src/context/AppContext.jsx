@@ -5,6 +5,7 @@ import {
   deleteMessage as deleteMessageFromDB,
   wipeAllMessages
 } from '@/crypto/messageDB';
+import { deleteBlob } from '@/crypto/blobStorage';
 
 const AppContext = createContext(null);
 
@@ -146,6 +147,27 @@ function appReducer(state, action) {
       const { convId, msgId } = action.payload;
       deleteMessageFromDB(msgId).catch(err => console.warn('Failed to delete message:', err));
 
+      // Clean up the Supabase Storage blob if the deleted message had an
+      // encrypted attachment. This is best-effort — a failure here does not
+      // block the local delete.
+      const convForDelete = state.conversations.find(c => c.id === convId);
+      const msgToDelete = convForDelete?.messages.find(m => m.id === msgId);
+      const att = msgToDelete?.attachment;
+      // We must use the original storage URL. If the user decrypted it, att.url
+      // might be 'blob://...', so we check att.encrypted. We should pass the
+      // original https:// url to deleteBlob.
+      // Wait, deleteBlob requires an http url. The original URL is unfortunately lost
+      // if it was overwritten with blob://... 
+      // Actually, wait, let's look at ChatsScreen handleDecrypt:
+      // it sets attachment: { ...attachmentObj, url: blobUrl }
+      // This overwrites the original url in state. 
+      // This is a bigger bug! We need to keep the original URL.
+      if (att?.encrypted === true && att.originalUrl) {
+        deleteBlob(att.originalUrl).catch(() => {});
+      } else if (att?.encrypted === true && att.url?.startsWith('http')) {
+        deleteBlob(att.url).catch(() => {});
+      }
+
       const conversations = state.conversations.map((c) => {
         if (c.id !== convId) return c;
         return {
@@ -224,6 +246,15 @@ function appReducer(state, action) {
             convChanged = true;
             changed = true;
             deleteMessageFromDB(m.id).catch(() => { });
+            // Clean up Supabase Storage blob if the expired message had one.
+            // Use the original https:// URL (stored in attachment ref) not
+            // the transient blob:// URL that may have replaced it after decryption.
+            const att = m.attachment;
+            if (att?.encrypted === true && att.originalUrl) {
+              deleteBlob(att.originalUrl).catch(() => {});
+            } else if (att?.encrypted === true && att.url?.startsWith('http')) {
+              deleteBlob(att.url).catch(() => {});
+            }
             return false;
           }
           return true;

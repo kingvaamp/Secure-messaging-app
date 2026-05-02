@@ -1,73 +1,71 @@
-# React + TypeScript + Vite
+# Vanish Messagerie
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Vanish is an end-to-end encrypted (E2EE), privacy-first messaging application. Designed to be completely zero-knowledge, Vanish ensures that no server, not even the infrastructure hosting the signaling and storage, can ever read your messages or access your attachments. It provides ephemeral, peer-to-peer secure communication built on the Signal Protocol's cryptographic primitives.
 
-Currently, two official plugins are available:
+## 🏗 Architecture Overview
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+Vanish operates on a decentralized trust model relying on a central signaling server purely for message routing, while all cryptographic operations happen entirely client-side.
 
-## React Compiler
+*   **Frontend**: React (Vite) with an immersive, glassmorphism UI.
+*   **Signaling & Transport**: Supabase Realtime (WebSockets) for message delivery and user presence.
+*   **Storage (Encrypted Blob Storage)**: Supabase Storage for encrypted file attachments.
+*   **Cryptography**: WebCrypto API for native, high-performance cryptographic primitives (AES-GCM, ECDH, HKDF, HMAC).
+*   **Local Persistence**: IndexedDB with envelope encryption. Data is encrypted at rest in the browser and never synced to the cloud.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+The architecture strictly separates the **Transport Layer** (Supabase) from the **Security Layer** (Double Ratchet / WebCrypto). Supabase acts only as an untrusted relayer of ciphertext.
 
-## Expanding the ESLint configuration
+## 🔒 How End-to-End Encryption Works
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+Vanish uses a full implementation of the **Double Ratchet Algorithm** combined with **X3DH (Extended Triple Diffie-Hellman)** for asynchronous key agreement.
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+1.  **Identity & Prekeys (X3DH)**: When a user registers, they generate a long-term Identity Key (Ed25519) and a set of One-Time Prekeys (OPKs) and a Signed Prekey (SPK). The public keys are uploaded to Supabase.
+2.  **Session Establishment**: When Alice wants to message Bob, she fetches Bob's prekeys to perform an X3DH key agreement. This derives a shared Master Secret without Bob needing to be online.
+3.  **The Double Ratchet**: The Master Secret seeds the Double Ratchet. Every message sent or received advances a KDF (Key Derivation Function) chain, providing:
+    *   **Forward Secrecy (FS)**: Compromising a current key does not compromise past messages.
+    *   **Post-Compromise Security (PCS)**: If a key is compromised, subsequent messages will self-heal and become secure again after a new Diffie-Hellman exchange.
+4.  **Group Messaging**: Employs a pairwise fan-out model. Group messages are individually encrypted for each member using unique session keys (`conversationId::senderId`), ensuring cryptographic isolation between participants.
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+## 🛡 Security Features
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+*   **Zero-Knowledge Attachments**: Files up to 50MB are encrypted locally using a fresh AES-256-GCM key per file. Only the ciphertext is uploaded to Supabase Storage. The decryption key travels safely inside the Double Ratchet payload.
+*   **Sealed Sender (Metadata Anonymity)**: Message payloads are encrypted such that the signaling server does not know who is sending the message. The sender's identity certificate is embedded inside the ciphertext.
+*   **At-Rest Encryption**: Local message history is stored in IndexedDB but wrapped in AES-256-GCM envelope encryption. The Master Wrapping Key never leaves the browser's secure enclave.
+*   **Ephemeral Messaging (TTL)**: Messages self-destruct locally after their Time-To-Live expires, triggering local deletion and cryptographic wipe of associated encrypted blob attachments.
+*   **Safety Numbers**: Out-of-band verification via key fingerprints protects against Man-In-The-Middle (MITM) attacks.
+
+## 🚀 Setup Guide
+
+### Prerequisites
+*   Node.js (v18+)
+*   npm or yarn
+*   A Supabase project
+
+### 1. Environment Variables
+Create a `.env` file in the root directory and add your Supabase credentials:
+```bash
+VITE_SUPABASE_URL=https://your-project-id.supabase.co
+VITE_SUPABASE_ANON_KEY=your-anon-key
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+### 2. Supabase Setup
+You must configure the following in your Supabase project:
+*   **Auth**: Enable Email/Password or desired OAuth providers.
+*   **Database**: Set up the `profiles`, `public_keys`, and `groups` tables (refer to the SQL migrations in the documentation).
+*   **Storage**: Create a public bucket named `vanish-attachments`. Set RLS policies to allow authenticated users to INSERT to `{user_id}/*` and SELECT globally.
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+### 3. Installation
+```bash
+npm install
+npm run dev
 ```
+The app will be available at `http://localhost:5173`.
+
+## 🤝 Contribution Rules
+
+We take security and cryptography seriously. To contribute to Vanish:
+
+1.  **Never Roll Your Own Crypto**: All cryptographic changes must use standard primitives provided by the WebCrypto API. Do not introduce custom algorithms.
+2.  **Zero-Knowledge Principle**: No plaintext data, metadata, or keys should ever be transmitted to or stored on the server. If adding a feature (like read receipts or typing indicators), it must be E2EE.
+3.  **No Server-Side State**: The server remains an untrusted relayer. Do not build features that rely on the server keeping state of user conversations.
+4.  **Testing**: Any changes to the `src/crypto/` module must pass the integration test suite (`vanish.integration.test.js`). Run tests before submitting a PR.
+5.  **Review Process**: All code touching key derivation, session management, or storage requires a rigorous security review by a maintainer.

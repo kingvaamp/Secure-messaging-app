@@ -114,12 +114,11 @@ function dbDeleteByConversation(conversationId) {
 
 // ── Encryption Helpers ─────────────────────────────────────────────────
 
+const enc = new TextEncoder();
+
 // Simple per-conversation key derivation for message encryption
-// In production, this would use a proper key from the session
 async function deriveMessageKey(conversationId, salt) {
   const secret = await getMessageDBSecret();
-  const enc = new TextEncoder();
-  const info = enc.encode(conversationId + (salt || ''));
   
   const keyMaterial = await crypto.subtle.importKey(
     'raw',
@@ -136,10 +135,12 @@ async function deriveMessageKey(conversationId, salt) {
   );
 }
 
-async function encryptMessageContent(content, conversationId) {
+async function encryptMessageContent(content, conversationId, senderId = null) {
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const saltB64 = toB64(salt);
-  const bits = await deriveMessageKey(conversationId, saltB64);
+  // Mirror decryptMessageContent: use a per-sender session key for group messages
+  const sessionKey = senderId ? `${conversationId}::${senderId}` : conversationId;
+  const bits = await deriveMessageKey(sessionKey, saltB64);
   
   const key = await crypto.subtle.importKey('raw', bits, 'AES-GCM', false, ['encrypt']);
   const iv = crypto.getRandomValues(new Uint8Array(12));
@@ -157,8 +158,10 @@ async function encryptMessageContent(content, conversationId) {
   };
 }
 
-async function decryptMessageContent(encrypted, conversationId) {
-  const bits = await deriveMessageKey(conversationId, encrypted.salt);
+async function decryptMessageContent(encrypted, conversationId, senderId = null) {
+  // For group messages, use unique session key: convId::senderId
+  const sessionKey = senderId ? `${conversationId}::${senderId}` : conversationId;
+  const bits = await deriveMessageKey(sessionKey, encrypted.salt);
   
   const key = await crypto.subtle.importKey('raw', bits, 'AES-GCM', false, ['decrypt']);
   const iv = fromB64(encrypted.iv);
@@ -173,7 +176,6 @@ async function decryptMessageContent(encrypted, conversationId) {
   return new TextDecoder().decode(plaintext);
 }
 
-const enc = new TextEncoder();
 
 // ── Public API ────────────────────────────────────────────────────────
 
@@ -184,10 +186,12 @@ const enc = new TextEncoder();
 export async function saveMessage(message) {
   const messageData = {
     ...message,
-    // Encrypt sensitive fields
+    // Encrypt sensitive fields — pass senderId so group messages use
+    // a per-sender session key matching what decryptMessageContent expects.
     encrypted: await encryptMessageContent(
       JSON.stringify({ text: message.text, attachment: message.attachment }),
-      message.conversationId
+      message.conversationId,
+      message.senderId || null
     ),
     // Keep searchable metadata (unencrypted for indexing)
     timestamp: message.timestamp || Date.now(),
@@ -216,7 +220,8 @@ export async function loadConversationMessages(conversationId) {
   const decrypted = await Promise.all(
     messages.map(async (msg) => {
       try {
-        const plaintext = await decryptMessageContent(msg.encrypted, conversationId);
+        // Pass senderId so group messages resolve the correct per-sender key
+        const plaintext = await decryptMessageContent(msg.encrypted, conversationId, msg.senderId || null);
         const parsed = JSON.parse(plaintext);
         return {
           ...msg,
@@ -226,7 +231,7 @@ export async function loadConversationMessages(conversationId) {
           persisted: true
         };
       } catch (e) {
-        console.warn('Failed to decrypt message:', msg.id);
+        console.warn('Failed to decrypt message:', msg.id, 'sender:', msg.senderId);
         return {
           ...msg,
           text: '[Decryption failed]',
@@ -251,7 +256,8 @@ export async function getMessage(id) {
   if (!msg) return null;
   
   try {
-    const plaintext = await decryptMessageContent(msg.encrypted, msg.conversationId);
+    // Pass senderId to match the per-sender key used at save time
+    const plaintext = await decryptMessageContent(msg.encrypted, msg.conversationId, msg.senderId || null);
     const parsed = JSON.parse(plaintext);
     return { ...msg, text: parsed.text, attachment: parsed.attachment };
   } catch {
