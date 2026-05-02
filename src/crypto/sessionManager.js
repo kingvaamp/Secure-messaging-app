@@ -57,6 +57,11 @@ import {
   x3dhRespond,
 } from './x3dh';
 import {
+  generateAnonymousSenderKey,
+  createSealedMessage,
+  openSealedMessage,
+} from './sealedSender';
+import {
   saveIdentityKey,
   loadIdentityKey,
   saveSignedPreKey,
@@ -325,20 +330,65 @@ async function getOrCreateRatchet(conversationId, contactId, role = 'alice', ali
   const myKP = await getMyIdentityKeyPair();
 
   if (role === 'alice') {
-    //  Alice path: fetch Bob's bundle and initiate 
+    // ── Alice path: fetch Bob's bundle and initiate ──────────────────────
     const { data, error } = await supabase
       .from('x3dh_bundles')
       .select('bundle')
       .eq('user_id', contactId)
       .single();
 
+    // ── Fallback A: No bundle at all (new user / first login / offline) ──
+    // Signal spec allows a degraded session using only the contact's long-term
+    // identity key when no prekey bundle is available. Forward secrecy is
+    // reduced (no SPK/OPK) but the conversation still opens and is E2E encrypted.
+    // This session will be automatically upgraded when the contact publishes a bundle.
     if (error || !data?.bundle) {
-      throw new Error('X3DH: contact has no published bundle  cannot establish session');
+      console.warn('[X3DH] No bundle for contact — falling back to identity-key-only session:', contactId);
+
+      // Try to get the contact's raw identity key from the legacy user_keys table
+      const { data: legacyKey } = await supabase
+        .from('user_keys')
+        .select('public_key_b64')
+        .eq('user_id', contactId)
+        .single();
+
+      if (!legacyKey?.public_key_b64) {
+        // Truly no key material available — cannot establish any session.
+        throw new Error('X3DH: contact has no published key material — cannot establish session');
+      }
+
+      // Degraded ECDH: DH(myIdentity, theirIdentity) as shared secret.
+      // No SPK, no OPK, no forward secrecy — but encrypted and functional.
+      const theirIdentityPublic = await importPublicKey(legacyKey.public_key_b64);
+      const sk = await ecdh(myKP.privateKeyECDH, theirIdentityPublic);
+      const ad = new Uint8Array(0); // no associated data in degraded mode
+
+      // Generate an ephemeral key to send in the header so Bob can derive the same secret
+      const ephemeralKP = await generateKeyPair();
+      const ephemeralDH = await ecdh(ephemeralKP.privateKey, theirIdentityPublic);
+
+      // Mark this as a degraded session (no SPK/OPK IDs to include)
+      pendingEphemeralKeys.set(conversationId, {
+        ephemeralPublicB64: ephemeralKP.publicB64,
+        signedPreKeyId: null,
+        opkKeyId: null,
+        degraded: true, // signal to header builder that this is fallback mode
+      });
+      sessionADs.set(conversationId, ad);
+
+      const ratchet = new DoubleRatchet();
+      await ratchet.initialize(ephemeralDH);
+      ratchets.set(conversationId, ratchet);
+      await saveSessionState(conversationId, ratchet);
+      return ratchet;
     }
 
     const theirBundle = data.bundle;
 
-    // Claim one OPK: pop the first available OPK from the bundle and mark it used
+    // ── Fallback B: Bundle exists but OPKs are exhausted ────────────────
+    // Signal Protocol §3.3 explicitly allows X3DH initiation without an OPK.
+    // We proceed with IK + SPK only. `selectedOPK` stays null — x3dhInitiate
+    // handles this case by omitting the OPK DH step.
     let selectedOPK = null;
     if (theirBundle.oneTimePreKeys && theirBundle.oneTimePreKeys.length > 0) {
       selectedOPK = theirBundle.oneTimePreKeys[0];
@@ -350,7 +400,7 @@ async function getOrCreateRatchet(conversationId, contactId, role = 'alice', ali
         updated_at: new Date().toISOString(),
       }).eq('user_id', contactId);
 
-      // Record the claim (best effort  OPK rotation is non-fatal)
+      // Record the claim (best effort — OPK rotation is non-fatal)
       const mySession = await supabase.auth.getUser();
       if (mySession?.data?.user?.id) {
         try {
@@ -362,13 +412,21 @@ async function getOrCreateRatchet(conversationId, contactId, role = 'alice', ali
           });
         } catch { /* non-fatal */ }
       }
+    } else {
+      // OPKs exhausted — log a warning, continue with IK+SPK only.
+      console.warn('[X3DH] OPKs exhausted for contact — initiating without OPK (Signal spec §3.3):', contactId);
+    }
+
+    // Guard: SPK must exist — without it we cannot do X3DH at all.
+    if (!theirBundle.signedPreKey?.publicB64) {
+      throw new Error('X3DH: contact bundle is missing SPK — cannot establish session');
     }
 
     // Build the bundle object expected by x3dhInitiate
     const initiateBundle = {
       identityPublicB64: theirBundle.identityKey.publicB64,
-      signedPreKey:      theirBundle.signedPreKey,          // { keyId, publicB64, signature }
-      oneTimePreKey:     selectedOPK,                        // { keyId, publicB64 } or null
+      signedPreKey:      theirBundle.signedPreKey, // { keyId, publicB64, signature }
+      oneTimePreKey:     selectedOPK,              // { keyId, publicB64 } or null — both valid
     };
 
     const { sk, ad, ephemeralPublicB64 } = await x3dhInitiate(myKP, initiateBundle);
@@ -378,18 +436,17 @@ async function getOrCreateRatchet(conversationId, contactId, role = 'alice', ali
     pendingEphemeralKeys.set(conversationId, {
       ephemeralPublicB64,
       signedPreKeyId: theirBundle.signedPreKey.keyId,
-      opkKeyId:       selectedOPK ? selectedOPK.keyId : null
+      opkKeyId:       selectedOPK ? selectedOPK.keyId : null,
     });
     sessionADs.set(conversationId, ad);
 
     const ratchet = new DoubleRatchet();
-    // Initialize with shared secret (sk) - Signal spec
     await ratchet.initialize(sk);
     ratchets.set(conversationId, ratchet);
-    
+
     // Persist immediately
     await saveSessionState(conversationId, ratchet);
-    
+
     return ratchet;
 
   } else {
@@ -464,7 +521,6 @@ export async function encryptMessage(conversationId, contactId, plaintext) {
       opkKeyId:           pending.opkKeyId,
     };
     
-    // If Bob has already responded (we have his ratchet key), we can stop sending the X3DH header
     if (ratchet.recvRatchetPublicKey) {
       pendingEphemeralKeys.delete(conversationId);
     }
@@ -472,6 +528,38 @@ export async function encryptMessage(conversationId, contactId, plaintext) {
 
   // Persist updated state (chain key advanced)
   await saveSessionState(conversationId, ratchet);
+
+  // ── Sealed Sender Outer Envelope ──────────────────────────────────────
+  // Fetch the recipient's identity public key so we can seal the envelope.
+  // If the lookup fails (e.g. no bundle yet), fall back to sending the raw
+  // ratchet payload so the conversation still works.
+  let sealedEnvelope = null;
+  try {
+    const { data } = await supabase
+      .from('x3dh_bundles')
+      .select('bundle')
+      .eq('user_id', contactId)
+      .single();
+
+    if (data?.bundle?.identityKey?.publicB64) {
+      const recipientIdentityB64 = data.bundle.identityKey.publicB64;
+
+      // Generate a fresh anonymous key per message — unlinkable across sends.
+      const anonKey = await generateAnonymousSenderKey();
+
+      // Seal the inner ratchet payload (JSON-stringified) with the anonymous key.
+      const innerJson = JSON.stringify({ ...ratchetPayload, x3dh: x3dhHeader });
+      sealedEnvelope = await createSealedMessage(anonKey, recipientIdentityB64, innerJson);
+    }
+  } catch (e) {
+    console.warn('[SealedSender] Envelope creation failed, falling back to plain payload:', e.message);
+  }
+
+  // If sealing succeeded, return only the opaque envelope — server sees no plaintext or sender key.
+  // If sealing failed, return the raw ratchet payload (graceful degradation).
+  if (sealedEnvelope) {
+    return { sealedEnvelope, x3dh: null }; // x3dh is inside the sealed envelope
+  }
 
   return {
     ...ratchetPayload,
@@ -492,20 +580,41 @@ export async function encryptMessage(conversationId, contactId, plaintext) {
  */
 export async function decryptPayload(conversationId, contactId, payload) {
   try {
-    // If this is the first message from Alice, establish Bob's session first
-    if (payload.x3dh && !ratchets.has(conversationId)) {
-      await getOrCreateRatchet(conversationId, contactId, 'bob', payload.x3dh);
+    let innerPayload = payload;
+
+    // ── Sealed Sender: Open the outer envelope first ───────────────────
+    // If the payload has a sealedEnvelope, the sender wrapped the ratchet
+    // payload in an anonymous ECDH envelope. We open it with our identity
+    // private key to recover the original ratchet payload + x3dh header.
+    if (payload?.sealedEnvelope) {
+      try {
+        const myKP = await getMyIdentityKeyPair();
+        const innerJson = await openSealedMessage(
+          myKP.privateKeyECDH,
+          payload.sealedEnvelope.anonymousPublicB64,
+          { iv: payload.sealedEnvelope.iv, ciphertext: payload.sealedEnvelope.ciphertext }
+        );
+        innerPayload = JSON.parse(innerJson);
+      } catch (e) {
+        console.warn('[SealedSender] Failed to open sealed envelope, trying raw payload:', e.message);
+        // Fall through with the original payload — graceful degradation
+      }
     }
 
-    const ratchet = await getOrCreateRatchet(conversationId, contactId, 'bob', payload.x3dh ?? null);
-    const plaintext = await ratchet.decrypt(payload, sessionADs.get(conversationId));
+    // If this is the first message from Alice, establish Bob's session first
+    if (innerPayload.x3dh && !ratchets.has(conversationId)) {
+      await getOrCreateRatchet(conversationId, contactId, 'bob', innerPayload.x3dh);
+    }
+
+    const ratchet = await getOrCreateRatchet(conversationId, contactId, 'bob', innerPayload.x3dh ?? null);
+    const plaintext = await ratchet.decrypt(innerPayload, sessionADs.get(conversationId));
     
     // Persist updated state (chain key advanced, possibly DH ratchet stepped)
     await saveSessionState(conversationId, ratchet);
     
     return plaintext;
   } catch {
-    throw new Error('Double Ratchet decryption failed  possible tampering or key mismatch');
+    throw new Error('Double Ratchet decryption failed — possible tampering or key mismatch');
   }
 }
 

@@ -2,7 +2,8 @@ import { useState, useRef, useEffect } from 'react';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import {
   ChevronLeft, Phone, MoreVertical, Lock, Unlock,
-  Send, Plus, Mic, CheckCheck, AlertTriangle, X, FileText, Search, ShieldCheck
+  Send, Plus, Mic, CheckCheck, AlertTriangle, X, FileText, Search, ShieldCheck,
+  Edit3, RefreshCcw, Trash2
 } from 'lucide-react';
 import { useApp } from '@/context/AppContext';
 import { useWebRTC } from '@/context/WebRTCContext';
@@ -14,48 +15,79 @@ import VoiceRecorder from '@/components/VoiceRecorder';
 import PlasmaBackground from '@/components/PlasmaBackground';
 import { encryptMessage, decryptPayload } from '@/crypto/sessionManager';
 
-// ============================================
-// Conversation Row (Premium)
-// ============================================
-function ConversationRow({ conv, onClick, isLast, contacts }) {
-  const contact = contacts.find((c) => c.id === conv.contactId);
-  if (!contact) return null;
-
+function ConversationRow({ conv, onClick, onDelete, isLast, contacts, groups }) {
   const hasUnread = conv.unreadCount > 0;
+  
+  let name = 'Inconnu';
+  let isOnline = false;
+  let isGroup = !!conv.isGroup;
+
+  if (isGroup) {
+    const group = groups.find(g => g.id === conv.contactId);
+    name = group?.name || 'Groupe';
+  } else {
+    const contact = contacts.find((c) => c.id === conv.contactId);
+    if (!contact) return null;
+    name = contact.name;
+    isOnline = contact.online;
+  }
+
+  const handleDelete = (e) => {
+    e.stopPropagation();
+    if (window.confirm(`Supprimer la conversation avec ${name} ?`)) {
+      onDelete(conv.id);
+    }
+  };
 
   return (
-    <button
-      onClick={onClick}
-      className={`w-full flex items-center gap-4 px-5 py-4 text-left transition-all duration-500 hover:bg-white/[0.03] active:scale-[0.98] relative group outline-none ${hasUnread ? 'bg-[#ff003c]/[0.02]' : ''}`}
-      style={{ borderBottom: isLast ? 'none' : '1px solid rgba(255, 0, 60, 0.08)' }}
-    >
-      {hasUnread && (
-        <div className="absolute left-0 top-4 bottom-4 w-1 rounded-r-full" style={{ backgroundColor: '#ff003c', boxShadow: '2px 0 12px #ff003c' }} />
-      )}
-
-      <div className="relative">
-        <Av name={contact.name} size={50} online={contact.online} borderColor={hasUnread ? '#ff003c' : 'rgba(255,255,255,0.1)'} />
+    <div className="relative group">
+      <button
+        onClick={onClick}
+        className={`w-full flex items-center gap-4 px-5 py-4 text-left transition-all duration-500 hover:bg-white/[0.03] active:scale-[0.98] relative outline-none ${hasUnread ? 'bg-[#ff003c]/[0.02]' : ''}`}
+        style={{ borderBottom: isLast ? 'none' : '1px solid rgba(255, 0, 60, 0.08)' }}
+      >
         {hasUnread && (
-          <div className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-[#ff003c] border-2 border-black animate-pulse" />
+          <div className="absolute left-0 top-4 bottom-4 w-1 rounded-r-full" style={{ backgroundColor: '#ff003c', boxShadow: '2px 0 12px #ff003c' }} />
         )}
-      </div>
 
-      <div className="flex-1 min-w-0 ml-1">
-        <div className="flex items-center justify-between mb-0.5">
-          <h3 className={`text-[17px] truncate ${hasUnread ? 'font-bold text-white' : 'font-medium text-white/90'}`}>
-            {contact.name}
-          </h3>
-          <span className="text-[11px] font-bold tracking-tighter uppercase opacity-30">
-            {conv.timestamp}
-          </span>
+        <div className="relative">
+          {isGroup ? (
+            <div className="w-[50px] h-[50px] rounded-full flex items-center justify-center bg-white/5 border border-white/10 text-[#ff003c]">
+              <Plus size={24} />
+            </div>
+          ) : (
+            <Av name={name} size={50} online={isOnline} borderColor={hasUnread ? '#ff003c' : 'rgba(255,255,255,0.1)'} />
+          )}
+          {hasUnread && (
+            <div className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-[#ff003c] border-2 border-black animate-pulse" />
+          )}
         </div>
-        <div className="flex items-center justify-between">
-          <p className={`text-[13.5px] truncate ${hasUnread ? 'text-[#ff003c] font-medium' : 'text-white/40'}`}>
-            {hasUnread ? '🔒 Nouveau message sécurisé' : conv.lastMessage}
-          </p>
+
+        <div className="flex-1 min-w-0 ml-1">
+          <div className="flex items-center justify-between mb-0.5">
+            <h3 className={`text-[17px] truncate ${hasUnread ? 'font-bold text-white' : 'font-medium text-white/90'}`}>
+              {name}
+            </h3>
+            <span className="text-[11px] font-bold tracking-tighter uppercase opacity-30">
+              {conv.timestamp}
+            </span>
+          </div>
+          <div className="flex items-center justify-between">
+            <p className={`text-[13.5px] truncate ${hasUnread ? 'text-[#ff003c] font-medium' : 'text-white/40'}`}>
+              {hasUnread ? '🔒 Nouveau message sécurisé' : conv.lastMessage}
+            </p>
+          </div>
         </div>
-      </div>
-    </button>
+      </button>
+      
+      {/* Tactical Delete Button */}
+      <button
+        onClick={handleDelete}
+        className="absolute right-4 top-1/2 -translate-y-1/2 w-10 h-10 flex items-center justify-center rounded-full bg-[#ff003c]/10 text-[#ff003c] opacity-0 group-hover:opacity-100 transition-all hover:bg-[#ff003c] hover:text-white active:scale-90 shadow-[0_0_15px_rgba(255,0,60,0.2)]"
+      >
+        <Trash2 size={18} />
+      </button>
+    </div>
   );
 }
 
@@ -162,10 +194,12 @@ function MessageBubble({ message, isSent, onDecrypt, ttl, isVanishing }) {
 // ============================================
 // New Message Modal (Premium Redesign)
 // ============================================
-function NewMessageModal({ onClose, onStartChat }) {
+function NewMessageModal({ onClose, onConfirm }) {
   const { contacts } = useApp();
   const [selected, setSelected] = useState([]);
   const [search, setSearch] = useState('');
+  const [mode, setMode] = useState('private'); // 'private', 'group', 'broadcast'
+  const [groupName, setGroupName] = useState('');
 
   const filtered = contacts.filter(c => 
     c.name.toLowerCase().includes(search.toLowerCase()) || 
@@ -179,8 +213,12 @@ function NewMessageModal({ onClose, onStartChat }) {
   };
 
   const handleStart = () => {
-    if (selected.length === 1) {
-      onStartChat(selected[0]);
+    if (mode === 'private' && selected.length === 1) {
+      onConfirm('private', { contactId: selected[0] });
+    } else if (mode === 'group' && selected.length >= 1 && groupName.trim()) {
+      onConfirm('group', { name: groupName.trim(), memberIds: selected });
+    } else if (mode === 'broadcast' && selected.length >= 1) {
+      onConfirm('broadcast', { memberIds: selected });
     }
   };
 
@@ -196,19 +234,67 @@ function NewMessageModal({ onClose, onStartChat }) {
         <button onClick={onClose} className="p-2 -ml-2 text-white/60 hover:text-white transition-colors active:scale-90">
           <ChevronLeft size={24} />
         </button>
-        <h2 className="text-[17px] font-semibold tracking-tight text-white">Nouveau message</h2>
+        <h2 className="text-[17px] font-semibold tracking-tight text-white">
+          {mode === 'group' ? 'Nouveau Groupe' : mode === 'broadcast' ? 'Nouvelle Diffusion' : 'Nouveau message'}
+        </h2>
         {selected.length > 0 ? (
           <button 
             onClick={handleStart} 
             className="px-4 py-1.5 rounded-full text-[13px] font-bold text-white transition-all shadow-[0_0_15px_rgba(255,0,60,0.5)] active:scale-95" 
             style={{ backgroundColor: '#ff003c' }}
           >
-            Démarrer
+            {mode === 'group' ? 'Créer' : 'Démarrer'}
           </button>
         ) : (
           <div className="w-10" />
         )}
       </div>
+
+      {/* Mode Switcher */}
+      <div className="relative px-4 pt-4 z-10">
+        <div className="flex p-1 rounded-xl bg-white/5 border border-white/10 backdrop-blur-md">
+          {[
+            { id: 'private', label: 'Chat', icon: Send },
+            { id: 'group', label: 'Groupe', icon: Plus },
+            { id: 'broadcast', label: 'Diffusion', icon: RefreshCcw }
+          ].map((m) => (
+            <button
+              key={m.id}
+              onClick={() => {
+                setMode(m.id);
+                if (m.id === 'private' && selected.length > 1) setSelected([selected[0]]);
+              }}
+              className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-[12px] font-bold transition-all duration-300 ${mode === m.id ? 'bg-[#ff003c] text-white shadow-[0_0_12px_rgba(255,0,60,0.4)]' : 'text-white/40 hover:text-white/60'}`}
+            >
+              <m.icon size={14} />
+              {m.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Group Name Input */}
+      {mode === 'group' && (
+        <div className="relative px-4 pt-4 z-10 animate-in slide-in-from-top-2 duration-300">
+          <div 
+            className="flex items-center gap-3 px-4 py-3 rounded-2xl transition-all"
+            style={{ 
+              backgroundColor: 'rgba(255,255,255,0.04)', 
+              border: '1px solid rgba(255,0,60,0.2)',
+              boxShadow: 'inset 0 0 10px rgba(255,0,60,0.05)'
+            }}
+          >
+            <Edit3 size={18} className="text-[#ff003c]" />
+            <input 
+              type="text"
+              value={groupName}
+              onChange={(e) => setGroupName(e.target.value)}
+              placeholder="Nom du groupe..."
+              className="flex-1 bg-transparent text-[15px] text-white placeholder:text-white/20 outline-none"
+            />
+          </div>
+        </div>
+      )}
 
       {/* Search Bar */}
       <div className="relative px-4 py-4 z-10">
@@ -243,7 +329,10 @@ function NewMessageModal({ onClose, onStartChat }) {
           {filtered.map((contact, index) => (
             <button
               key={contact.id}
-              onClick={() => toggleContact(contact.id)}
+              onClick={() => {
+                if (mode === 'private') setSelected([contact.id]);
+                else toggleContact(contact.id);
+              }}
               className="w-full flex items-center gap-4 px-5 py-4 text-left transition-all hover:bg-white/[0.04] active:bg-white/[0.08] group"
               style={{ borderBottom: index < filtered.length - 1 ? '1px solid rgba(255,0,60,0.05)' : 'none' }}
             >
@@ -287,7 +376,7 @@ function NewMessageModal({ onClose, onStartChat }) {
 // Chat Detail View (Premium Redesign)
 // ============================================
 function ChatDetail({ conv, onBack }) {
-  const { contacts, currentUser, deleteMessage, sendMessage, decryptMessage, addNotification } = useApp();
+  const { contacts, currentUser, deleteMessage, sendMessage, sendGroupMessage, decryptMessage, addNotification, groups, acquireSendLock, releaseSendLock } = useApp();
   const { initiateCall } = useWebRTC();
   const contact = contacts.find((c) => c.id === conv.contactId);
   const [messageText, setMessageText] = useState('');
@@ -383,41 +472,61 @@ function ChatDetail({ conv, onBack }) {
     e.target.value = '';
   };
 
-  if (!contact) return null;
+  if (!conv.isGroup && !contact) return null;
 
   const handleSend = async () => {
     if (!messageText.trim() && !attachment) return;
 
-    let plaintext = messageText.trim();
-    if (attachment) {
-      plaintext = JSON.stringify({ text: plaintext, attachment });
-    }
+    // Module-level lock — prevents double-send even if the component remounts
+    const lockKey = `chat::${conv.id}`;
+    if (!acquireSendLock(lockKey)) return;
 
-    let payload = null;
     try {
-      payload = await encryptMessage(conv.id, conv.contactId, plaintext);
-    } catch (e) {
-      console.error('[Chat] Encryption error:', e);
-      addNotification({ type: 'error', text: '⚠️ Échec du chiffrement: ' + (e?.message || 'Erreur inconnue') });
-      return;
+      let plaintext = messageText.trim();
+      if (attachment) {
+        plaintext = JSON.stringify({ text: plaintext, attachment });
+      }
+
+      if (conv.isGroup) {
+        // ── Group path ──────────────────────────────────────────────
+        // Fully delegated to AppContext.sendGroupMessage — this is the ONLY
+        // place that calls encryptMessage for group sends. Doing it here AND
+        // in context would double-advance the ratchet and break decryption.
+        await sendGroupMessage(conv.id, plaintext, {
+          text: messageText.trim(),
+          attachment,
+        });
+      } else {
+        // ── 1:1 path ──────────────────────────────────────────────
+        let payload = null;
+        try {
+          payload = await encryptMessage(conv.id, conv.contactId, plaintext);
+        } catch (e) {
+          console.error('[Chat] Encryption error:', e);
+          addNotification({ type: 'error', text: '⚠️ Échec du chiffrement: ' + (e?.message || 'Erreur inconnue') });
+          return;
+        }
+
+        const newMsg = {
+          id: `msg-${Date.now()}-${Array.from(crypto.getRandomValues(new Uint8Array(4)), b => b.toString(16).padStart(2, '0')).join('')}`,
+          senderId: 'me',
+          text: messageText.trim(),
+          attachment,
+          time: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+          isRead: false,
+          ttl: 0,
+          locked: true,
+          payload,
+        };
+        sendMessage(conv.id, newMsg);
+      }
+
+      Haptics.impact({ style: ImpactStyle.Medium }).catch(() => {});
+      setMessageText('');
+      setAttachment(null);
+    } finally {
+      releaseSendLock(lockKey);
     }
-
-    const newMsg = {
-      id: `msg-${Array.from(crypto.getRandomValues(new Uint8Array(8)), b => b.toString(16).padStart(2, '0')).join('')}`,
-      senderId: 'me',
-      text: messageText.trim(),
-      attachment,
-      time: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
-      isRead: false,
-      ttl: 0,
-      locked: true,
-      payload,
-    };
-
-    sendMessage(conv.id, newMsg);
-    Haptics.impact({ style: ImpactStyle.Medium }).catch(() => {});
-    setMessageText('');
-    setAttachment(null);
   };
 
   const handleDecrypt = async (msg) => {
@@ -427,11 +536,28 @@ function ChatDetail({ conv, onBack }) {
     let attachmentObj = null;
 
     if (msg.senderId === 'me') {
+      // We are the sender — plaintext is already stored locally, no decryption needed.
       plaintext = msg.text;
       attachmentObj = msg.attachment;
     } else if (msg.payload?.iv && msg.payload?.ciphertext) {
       try {
-        const decryptedStr = await decryptPayload(conv.id, conv.contactId, msg.payload);
+        // For GROUP messages: the session key is a pairwise `${convId}::${senderId}`
+        // so Alice→Bob and Alice→Charlie never share the same ratchet chain.
+        // The sender embeds `groupSessionKey` in the message; we fall back to
+        // constructing it ourselves from `conv.id::msg.senderId` if not present.
+        let sessionId;
+        let contactId;
+        if (conv.isGroup) {
+          // Use the embedded session key if present; otherwise reconstruct it.
+          sessionId = msg.groupSessionKey || `${conv.id}::${msg.senderId}`;
+          contactId = msg.senderId; // the individual sender, not the group
+        } else {
+          // Standard 1:1 conversation
+          sessionId = conv.id;
+          contactId = conv.contactId;
+        }
+
+        const decryptedStr = await decryptPayload(sessionId, contactId, msg.payload);
         try {
           const parsed = JSON.parse(decryptedStr);
           if (parsed.text !== undefined || parsed.attachment !== undefined) {
@@ -456,12 +582,8 @@ function ChatDetail({ conv, onBack }) {
   };
 
   return (
-    <div className="absolute inset-0 z-[50] flex flex-col overflow-hidden bg-[#050000]">
-      {/* Immersive Plasma Background with Vignette */}
-      <div className="absolute inset-0 opacity-30 pointer-events-none z-0 scale-110">
-        <PlasmaBackground opacity={1} />
-      </div>
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_0%,rgba(5,0,0,0.8)_100%)] pointer-events-none z-1" />
+    <div className="absolute inset-0 z-[50] flex flex-col overflow-hidden">
+      <PlasmaBackground opacity={0.6} />
 
       {/* Header - Holographic Glass */}
       <div
@@ -478,29 +600,45 @@ function ChatDetail({ conv, onBack }) {
         </button>
 
         <div className="relative group">
-          <Av name={contact.name} size={40} online={contact.online} />
+          {conv.isGroup ? (
+            <div className="w-10 h-10 rounded-full flex items-center justify-center bg-white/5 border border-white/10 text-[#ff003c]">
+               <Plus size={20} />
+            </div>
+          ) : (
+            <Av name={contact?.name || 'Inconnu'} size={40} online={contact?.online} />
+          )}
           <div className="absolute -inset-1 bg-[#ff003c]/20 blur-md rounded-full -z-10 group-hover:opacity-100 opacity-0 transition-opacity" />
         </div>
 
         <div className="flex-1 min-w-0">
           <h3 className="text-[17px] font-black text-white truncate tracking-tight drop-shadow-[0_0_10px_rgba(255,255,255,0.2)]">
-            {contact.name}
+            {conv.isGroup ? (groups.find(g => g.id === conv.contactId)?.name || 'Groupe') : (contact?.name || 'Inconnu')}
           </h3>
           <div className="flex items-center gap-2 -mt-0.5">
-            <div className="w-1.5 h-1.5 rounded-full bg-[#22c55e] animate-[pulse_1.5s_infinite] shadow-[0_0_10px_#22c55e]" />
-            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[#22c55e]/90">Protégé · En Ligne</span>
+            {conv.isGroup ? (
+              <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[#ff003c]/90">
+                {groups.find(g => g.id === conv.contactId)?.members.length || 0} Membres
+              </span>
+            ) : (
+              <>
+                <div className="w-1.5 h-1.5 rounded-full bg-[#22c55e] animate-[pulse_1.5s_infinite] shadow-[0_0_10px_#22c55e]" />
+                <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[#22c55e]/90">Protégé · En Ligne</span>
+              </>
+            )}
             <div className="h-2.5 w-[1px] bg-white/10 mx-1" />
             <BadgeE2E />
           </div>
         </div>
 
         <div className="flex items-center gap-2">
-          <button 
-            onClick={() => initiateCall(contact.id)}
-            className="w-10 h-10 flex items-center justify-center text-white/30 hover:text-white hover:bg-white/5 rounded-full transition-all active:scale-90"
-          >
-            <Phone size={20} />
-          </button>
+          {!conv.isGroup && (
+            <button 
+              onClick={() => initiateCall(contact.id)}
+              className="w-10 h-10 flex items-center justify-center text-white/30 hover:text-white hover:bg-white/5 rounded-full transition-all active:scale-90"
+            >
+              <Phone size={20} />
+            </button>
+          )}
           <button className="w-10 h-10 flex items-center justify-center text-white/30 hover:text-white hover:bg-white/5 rounded-full transition-all active:scale-90">
             <MoreVertical size={20} />
           </button>
@@ -633,14 +771,143 @@ function ChatDetail({ conv, onBack }) {
 }
 
 // ============================================
+// Broadcast Detail View (Special One-off UI)
+// ============================================
+function BroadcastDetail({ memberIds, onBack }) {
+  const { contacts, sendBroadcast, addNotification, acquireSendLock, releaseSendLock } = useApp();
+  const [messageText, setMessageText] = useState('');
+  
+  const selectedContacts = contacts.filter(c => memberIds.includes(c.id));
+
+  const handleSend = async () => {
+    if (!messageText.trim()) return;
+
+    // Module-level lock keyed on the recipient set — prevents double-sends
+    // across component remounts.
+    const lockKey = `broadcast::${memberIds.sort().join(',')}`;
+    if (!acquireSendLock(lockKey)) return;
+
+    try {
+      const newMsg = {
+        id: `broadcast-${Date.now()}`,
+        senderId: 'me',
+        text: messageText.trim(),
+        time: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }),
+        isRead: false,
+        ttl: 0,
+        locked: true,
+      };
+
+      await sendBroadcast(memberIds, newMsg);
+      addNotification({ type: 'success', text: `Message envoyé à ${memberIds.length} contacts.` });
+      onBack();
+    } catch (e) {
+      addNotification({ type: 'error', text: 'Erreur lors de la diffusion.' });
+    } finally {
+      releaseSendLock(lockKey);
+    }
+  };
+
+  return (
+    <div className="h-full flex flex-col relative overflow-hidden">
+      <PlasmaBackground opacity={0.6} />
+      
+      {/* Tactical Header */}
+      <div className="relative z-10 flex items-center gap-4 px-4 pt-12 pb-6 bg-black/40 backdrop-blur-2xl border-b border-[#ff003c]/10">
+        <button onClick={onBack} className="p-2 -ml-2 rounded-full hover:bg-[#ff003c]/10 text-white/60 transition-colors">
+          <ChevronLeft size={24} />
+        </button>
+        <div className="flex-1">
+          <h2 className="text-[18px] font-black text-white tracking-tight drop-shadow-[0_0_10px_rgba(255,0,60,0.3)]">
+            Canal de Diffusion
+          </h2>
+          <div className="flex items-center gap-2 mt-0.5">
+            <span className="text-[10px] uppercase tracking-[0.2em] text-[#ff003c] font-black">
+              {memberIds.length} Destinataires
+            </span>
+            <div className="flex -space-x-2 ml-2">
+              {selectedContacts.slice(0, 3).map(c => (
+                <div key={c.id} className="w-5 h-5 rounded-full border border-black overflow-hidden bg-[#ff003c]/20 flex items-center justify-center text-[8px] font-bold text-white">
+                  {c.name[0]}
+                </div>
+              ))}
+              {memberIds.length > 3 && (
+                <div className="w-5 h-5 rounded-full border border-black bg-white/5 flex items-center justify-center text-[7px] font-black text-white/40">
+                  +{memberIds.length - 3}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Main Tactical View */}
+      <div className="relative z-10 flex-1 flex flex-col items-center justify-center p-8 text-center">
+        <div className="relative mb-8">
+          <div className="absolute inset-0 bg-[#ff003c]/20 blur-[40px] rounded-full animate-pulse" />
+          <div className="relative w-24 h-24 rounded-full bg-gradient-to-br from-[#ff003c]/20 to-transparent flex items-center justify-center border border-[#ff003c]/20 shadow-[0_0_30px_rgba(255,0,60,0.2)]">
+            <RefreshCcw size={40} className="text-[#ff003c]" />
+          </div>
+        </div>
+        
+        <h3 className="text-white text-xl font-black mb-3 tracking-tight drop-shadow-[0_0_15px_rgba(255,255,255,0.2)]">
+          Transmission Sécurisée
+        </h3>
+        <p className="text-white/40 text-[13px] max-w-xs leading-relaxed font-medium">
+          Votre message sera chiffré individuellement pour chaque destinataire. Aucun lien entre les contacts n'est partagé.
+        </p>
+      </div>
+
+      {/* Tactical Input Area */}
+      <div className="relative z-10 p-6 pb-[100px] bg-gradient-to-t from-black to-transparent">
+        <div className="flex items-center gap-3 bg-white/[0.03] backdrop-blur-3xl rounded-[22px] p-2 pl-5 border border-white/5 shadow-2xl">
+          <input
+            autoFocus
+            type="text"
+            value={messageText}
+            onChange={(e) => setMessageText(e.target.value)}
+            onKeyPress={(e) => e.key === 'Enter' && handleSend()}
+            placeholder="Composer le message de diffusion..."
+            className="flex-1 bg-transparent text-white text-[15px] outline-none placeholder:text-white/20 font-medium py-2"
+          />
+          <button
+            onClick={handleSend}
+            disabled={!messageText.trim()}
+            className="w-12 h-12 flex items-center justify-center rounded-2xl bg-[#ff003c] text-white disabled:opacity-20 disabled:grayscale transition-all active:scale-95 shadow-[0_0_20px_rgba(255,0,60,0.4)] hover:shadow-[0_0_30px_rgba(255,0,60,0.6)]"
+          >
+            <Send size={20} />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================
 // Main Chats Screen
 // ============================================
 export default function ChatsScreen() {
-  const { conversations, activeChatId, setActiveChat, closeChat, toggleUser, currentUser, contacts, createConversation } = useApp();
+  const { 
+    conversations, 
+    activeChatId, 
+    setActiveChat, 
+    closeChat, 
+    currentUser, 
+    contacts, 
+    createConversation,
+    createGroup,
+    groups,
+    deleteConversation
+  } = useApp();
   const { initiateCall } = useWebRTC();
   const [showNewMessage, setShowNewMessage] = useState(false);
+  const [activeBroadcast, setActiveBroadcast] = useState(null);
 
   const activeConv = conversations.find((c) => c.id === activeChatId);
+
+  if (activeBroadcast) {
+    return <BroadcastDetail memberIds={activeBroadcast} onBack={() => setActiveBroadcast(null)} />;
+  }
 
   if (activeConv) {
     return <ChatDetail conv={activeConv} onBack={closeChat} />;
@@ -650,15 +917,24 @@ export default function ChatsScreen() {
     return (
       <NewMessageModal
         onClose={() => setShowNewMessage(false)}
-        onStartChat={(contactId) => {
+        onConfirm={async (type, data) => {
           setShowNewMessage(false);
-          const existing = conversations.find((c) => c.contactId === contactId);
-          if (existing) {
-            setActiveChat(existing.id);
-          } else {
-            // Create new conversation and immediately set it as active
-            const newId = createConversation(contactId);
+          if (type === 'private') {
+            const contactId = data.contactId;
+            const existing = conversations.find((c) => c.contactId === contactId);
+            if (existing) {
+              setActiveChat(existing.id);
+            } else {
+              const newId = createConversation(contactId);
+              setActiveChat(newId);
+            }
+          } else if (type === 'group') {
+            // createGroup is async (Supabase persist) — must await to get the group ID string
+            const newGroupId = await createGroup(data.name, data.memberIds);
+            const newId = createConversation(newGroupId, true);
             setActiveChat(newId);
+          } else if (type === 'broadcast') {
+            setActiveBroadcast(data.memberIds);
           }
         }}
       />
@@ -686,15 +962,14 @@ export default function ChatsScreen() {
         </div>
 
         <div className="flex items-center gap-3">
-          {/* Alice/Bob toggle */}
-          <button
-            onClick={toggleUser}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-full text-[11px] font-medium transition-all hover:bg-[rgba(255,0,60,0.2)]"
-            style={{ backgroundColor: 'rgba(255, 0, 60, 0.1)', color: '#ff003c', border: '1px solid rgba(255,0,60,0.2)' }}
+          {/* Logged-in user identity chip — read-only, no debug toggle */}
+          <div
+            className="flex items-center gap-2 px-3 py-1.5 rounded-full text-[11px] font-medium"
+            style={{ backgroundColor: 'rgba(255, 0, 60, 0.08)', color: 'rgba(255,255,255,0.5)', border: '1px solid rgba(255,0,60,0.12)' }}
           >
-            <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: '#ff003c', boxShadow: '0 0 6px #ff003c' }} />
-            {currentUser?.name || 'Chargement...'}
-          </button>
+            <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: '#ff003c', boxShadow: '0 0 6px #ff003c' }} />
+            {currentUser?.pseudo || currentUser?.name || 'Chargement...'}
+          </div>
 
           <button
             onClick={() => setShowNewMessage(true)}
@@ -736,8 +1011,10 @@ export default function ChatsScreen() {
                 key={conv.id}
                 conv={conv}
                 contacts={contacts}
+                groups={groups}
                 isLast={index === conversations.length - 1}
                 onClick={() => setActiveChat(conv.id)}
+                onDelete={deleteConversation}
               />
             ))}
           </div>
