@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS opk_claims (
 
 ALTER TABLE opk_claims ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Users can insert own claims" ON opk_claims FOR INSERT WITH CHECK (auth.uid() = claimer_id);
+CREATE POLICY "Users can update own claims" ON opk_claims FOR UPDATE USING (auth.uid() = claimer_id);
 CREATE POLICY "Users can read own claims" ON opk_claims FOR SELECT USING (auth.uid() = claimer_id OR auth.uid() = owner_id);
 
 -- ──────────────────────────────────────────────

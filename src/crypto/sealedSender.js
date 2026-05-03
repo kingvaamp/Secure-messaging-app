@@ -70,11 +70,10 @@ export async function createSealedMessage(
   );
   
   // Encrypt the plaintext
-  const keyRaw = await crypto.subtle.exportKey('raw', messageKey);
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const ct = await crypto.subtle.encrypt(
     { name: 'AES-GCM', iv, tagLength: 128 },
-    await crypto.subtle.importKey('raw', keyRaw, 'AES-GCM', false, ['encrypt']),
+    await crypto.subtle.importKey('raw', messageKey, 'AES-GCM', false, ['encrypt']),
     new TextEncoder().encode(plainText)
   );
   
@@ -114,13 +113,12 @@ export async function openSealedMessage(
   );
   
   // Decrypt
-  const keyRaw = await crypto.subtle.exportKey('raw', messageKey);
   const iv = new Uint8Array(fromB64(payload.iv));
   const ct = fromB64(payload.ciphertext);
   
   const decrypted = await crypto.subtle.decrypt(
     { name: 'AES-GCM', iv, tagLength: 128 },
-    await crypto.subtle.importKey('raw', keyRaw, 'AES-GCM', false, ['decrypt']),
+    await crypto.subtle.importKey('raw', messageKey, 'AES-GCM', false, ['decrypt']),
     ct
   );
   
