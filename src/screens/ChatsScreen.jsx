@@ -600,7 +600,7 @@ function ChatDetail({ conv, onBack }) {
       // We are the sender — plaintext is already stored locally, no decryption needed.
       plaintext = msg.text;
       attachmentObj = msg.attachment;
-    } else if (msg.payload?.iv && msg.payload?.ciphertext) {
+    } else if ((msg.payload?.iv && msg.payload?.ciphertext) || msg.payload?.sealedEnvelope) {
       try {
         // For GROUP messages: the session key is a pairwise `${convId}::${senderId}`
         // so Alice→Bob and Alice→Charlie never share the same ratchet chain.
