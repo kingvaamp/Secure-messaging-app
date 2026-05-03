@@ -193,3 +193,19 @@ CREATE TRIGGER on_auth_user_created
 -- ============================================
 -- Done! All 9 tables created with RLS policies.
 -- ============================================
+
+-- ──────────────────────────────────────────────
+-- 10. groups — Group chat metadata
+-- Used by: AppContext.jsx (Group Sync)
+-- ──────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS groups (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  members UUID[] NOT NULL,
+  created_by UUID REFERENCES auth.users(id),
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE groups ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Users can read groups they are in" ON groups FOR SELECT USING (auth.uid() = ANY(members));
+CREATE POLICY "Users can create groups" ON groups FOR INSERT WITH CHECK (auth.uid() = created_by AND auth.uid() = ANY(members));
