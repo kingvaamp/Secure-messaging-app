@@ -239,6 +239,7 @@ export async function x3dhInitiate(ourIdentityKey, theirBundle) {
     sk,                           // ArrayBuffer — 32-byte session key → feed to DoubleRatchet
     ad,                           // Uint8Array  — AD for AEAD context
     ephemeralPublicB64: ek.publicB64, // string — sent to Bob in the initial message header
+    ephemeralKeyPair: ek,         // full key pair — Alice reuses as her initial DH ratchet key
   };
 }
 

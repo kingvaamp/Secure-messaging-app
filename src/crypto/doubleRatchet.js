@@ -309,11 +309,12 @@ export class DoubleRatchet {
   }
 
   /**
-   * Decrypt message - Signal 3.3.4
+   * Decrypt message - Signal 3.3.4 (corrected order)
    * 
-   * 1. Derive message key + next chain key from current chain key
-   * 2. Decrypt with message key + AD
-   * 3. Check for DH ratchet update
+   * Signal spec order:
+   * 1. DH ratchet step (if sender's ratchet key changed)
+   * 2. Derive message key from (possibly updated) recv chain
+   * 3. Decrypt with message key + AD
    * 4. Advance chain
    */
   async decrypt(payload) {
@@ -328,17 +329,38 @@ export class DoubleRatchet {
       throw new Error('No receive chain key');
     }
     
-    // Step 1: Reconstruct Associated Data
+    // Step 1: DH ratchet step (Signal spec — MUST happen before key derivation)
+    // If the sender's ratchet public key has changed, we need to derive new
+    // recv chain keys BEFORE attempting to decrypt.
+    if (payload.ratchetPublicKey) {
+      const newKey = await importPublicKey(payload.ratchetPublicKey);
+      
+      let keyChanged = !this.recvRatchetPublicKey; // first time seeing any key
+      if (!keyChanged) {
+        keyChanged = !constantTimeEqual(
+          await crypto.subtle.exportKey('raw', this.recvRatchetPublicKey),
+          await crypto.subtle.exportKey('raw', newKey)
+        );
+      }
+      
+      if (keyChanged) {
+        console.log('[Ratchet.decrypt] DH ratchet key changed — performing DH ratchet BEFORE decrypt');
+        this.recvRatchetPublicKey = newKey;
+        await this.performDHRatchet();
+      } else {
+        console.log('[Ratchet.decrypt] DH ratchet key unchanged — no DH ratchet needed');
+      }
+    }
+
+    // Step 2: Reconstruct Associated Data
     const messageNumber = payload.messageNumber ?? this.recvMessageNumber;
     const associatedData = encodeMessageNumber(messageNumber);
-    console.log('[Ratchet.decrypt] NOTE: We need message', messageNumber, 'but we are at recvMessageNumber', this.recvMessageNumber);
+    console.log('[Ratchet.decrypt] messageNumber:', messageNumber, 'recvMessageNumber:', this.recvMessageNumber);
     
-    // Step 2: Derive message key from chain key
+    // Step 3: Derive message key from (possibly updated) recv chain
     console.log('[Ratchet.decrypt] Deriving message key from recvChainKey...');
     
-    // If we missed messages, we need to advance the chain (Basic implementation)
-    // In a full Signal implementation, skipped keys would be stored in a dictionary.
-    // Here we just advance the chain to catch up if needed.
+    // Advance chain to catch up if we missed messages
     let currentChainKey = this.recvChainKey;
     let msgKey, nxtChainKey;
     
@@ -351,64 +373,20 @@ export class DoubleRatchet {
     
     const messageKey = msgKey;
     const nextChainKey = nxtChainKey;
-    
     console.log('[Ratchet.decrypt] Message key derived');
-    console.log('[Ratchet.decrypt] messageNumber:', messageNumber, 'associatedData length:', associatedData?.byteLength);
     
-    // Step 3: Decrypt
-    const ivDisplay = typeof payload.iv === 'string' ? payload.iv?.substring(0, 10) : (payload.iv?.byteLength ? 'ArrayBuffer' : payload.iv);
-    console.log('[Ratchet.decrypt] Attempting AES-GCM decrypt - iv:', ivDisplay);
-    console.log('[Ratchet.decrypt] iv type:', typeof payload.iv, 'ciphertext type:', typeof payload.ciphertext);
-    let plaintext;
-    try {
-      console.log('[Ratchet.decrypt] Calling primitives.decrypt...');
-      plaintext = await decrypt(
-        messageKey,
-        payload.iv,
-        payload.ciphertext,
-        associatedData
-      );
-      console.log('[Ratchet.decrypt] SUCCESS! plaintext length:', plaintext?.byteLength);
-    } catch (e) {
-      console.error('[Ratchet.decrypt] DECRYPT FAILED:', e.message);
-      console.error('[Ratchet.decrypt] Stack:', e.stack);
-      // Try alternative - maybe the data is already decoded
-      try {
-        console.log('[Ratchet.decrypt] Trying alternative with ArrayBuffer inputs...');
-        const ivArr = typeof payload.iv === 'string' ? fromB64(payload.iv) : payload.iv;
-        const ctArr = typeof payload.ciphertext === 'string' ? fromB64(payload.ciphertext) : payload.ciphertext;
-        plaintext = await decrypt(
-          messageKey,
-          ivArr,
-          ctArr,
-          associatedData
-        );
-        console.log('[Ratchet.decrypt] Alternative SUCCESS!');
-      } catch (e2) {
-        console.error('[Ratchet.decrypt] Alternative also FAILED:', e2.message);
-        throw e;
-      }
-    }
-    
-    // Step 4: Check for DH ratchet update
-    // Only happens when sender has rotated their DH key
-    if (payload.ratchetPublicKey) {
-      const newKey = await importPublicKey(payload.ratchetPublicKey);
-      
-      // If key changed, perform DH ratchet (POST-COMPROMISE SECURITY)
-      if (!this.recvRatchetPublicKey ||
-          !constantTimeEqual(
-            await crypto.subtle.exportKey('raw', this.recvRatchetPublicKey),
-            await crypto.subtle.exportKey('raw', newKey)
-          )) {
-        this.recvRatchetPublicKey = newKey;
-        await this.performDHRatchet();
-      }
-    }
+    // Step 4: Decrypt
+    const plaintext = await decrypt(
+      messageKey,
+      payload.iv,
+      payload.ciphertext,
+      associatedData
+    );
+    console.log('[Ratchet.decrypt] SUCCESS!');
     
     // Step 5: Advance chain (forward secrecy for received messages too)
     this.recvChainKey = nextChainKey;
-    this.recvMessageNumber++;
+    this.recvMessageNumber = messageNumber + 1;
     
     return plaintext;
   }

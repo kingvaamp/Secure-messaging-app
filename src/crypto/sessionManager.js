@@ -438,7 +438,7 @@ async function getOrCreateRatchet(conversationId, contactId, role = 'alice', ali
       oneTimePreKey:     selectedOPK,              // { keyId, publicB64 } or null — both valid
     };
 
-    const { sk, ad, ephemeralPublicB64 } = await x3dhInitiate(myKP, initiateBundle);
+    const { sk, ad, ephemeralPublicB64, ephemeralKeyPair } = await x3dhInitiate(myKP, initiateBundle);
 
     // Store ephemeral key and IDs so encryptMessage() can attach it to messages
     // until we receive Bob's first ratchet step.
@@ -451,6 +451,15 @@ async function getOrCreateRatchet(conversationId, contactId, role = 'alice', ali
 
     const ratchet = new DoubleRatchet();
     await ratchet.initialize(sk);
+
+    // CRITICAL (2026-05-06): Override the ratchet's send key pair with Alice's
+    // X3DH ephemeral key pair. This ensures the ratchetPublicKey attached to
+    // encrypted messages is IDENTICAL to the ephemeralKey in the X3DH header.
+    // Without this, Bob stores Alice's ephemeral key as recvRatchetPublicKey
+    // but sees a DIFFERENT ratchet key in the payload, triggering a spurious
+    // DH ratchet that breaks all subsequent chain key derivations.
+    ratchet.sendRatchetKeyPair = ephemeralKeyPair;
+
     ratchets.set(conversationId, ratchet);
 
     // Persist immediately
