@@ -505,10 +505,8 @@ async function getOrCreateRatchet(conversationId, contactId, role = 'alice', ali
     const skFingerprint = toB64(new Uint8Array(await crypto.subtle.digest('SHA-256', sk)).slice(0, 8));
     console.log('[Bob] X3DH SK fingerprint:', skFingerprint);
 
-    // Consume the OPK  delete it from storage so it's never reused
-    if (myOneTimePreKey && aliceHeader.opkKeyId) {
-      await deleteOneTimePreKey(aliceHeader.opkKeyId).catch(() => { /* non-fatal */ });
-    }
+    // NOTE: OPK is NOT deleted here — it is deleted in decryptPayload() after
+    // successful decryption. Deleting here means retries derive a different SK.
 
     sessionADs.set(conversationId, ad);
     console.log('[Bob] Session AD set, ad length:', ad?.byteLength);
@@ -646,12 +644,12 @@ export async function decryptPayload(conversationId, contactId, payload) {
     console.log('[Decrypt] innerPayload.x3dh:', innerPayload.x3dh ? 'EXISTS' : 'NULL');
     console.log('[Decrypt] innerPayload keys:', Object.keys(innerPayload));
 
-    // If this message carries an X3DH header, the sender is establishing a NEW
-    // session. We MUST create a fresh Bob ratchet — any existing session for this
-    // conversation is stale (different keys, different chain state).
+    // If X3DH header present, clear stale session and build fresh Bob ratchet.
+    // CRITICAL: call getOrCreateRatchet only ONCE — it stores the ratchet in the
+    // map so the second call (below) just returns the cached instance without
+    // re-running X3DH (which would fail because OPK may be consumed).
     if (innerPayload.x3dh) {
       console.log('[Decrypt] X3DH header present — clearing stale session and creating fresh Bob session');
-      // Purge the stale ratchet from memory and disk
       ratchets.delete(conversationId);
       sessionADs.delete(conversationId);
       try { await deleteRatchetSession(conversationId); } catch { /* non-fatal */ }
@@ -659,13 +657,20 @@ export async function decryptPayload(conversationId, contactId, payload) {
     }
 
     console.log('[Decrypt] Getting ratchet...');
-    const ratchet = await getOrCreateRatchet(conversationId, contactId, 'bob', innerPayload.x3dh ?? null);
+    // Pass null so getOrCreateRatchet just returns the already-cached ratchet
+    // without triggering a second Bob init (which would re-run X3DH without OPK).
+    const ratchet = await getOrCreateRatchet(conversationId, contactId, 'bob', null);
     console.log('[Decrypt] Got ratchet, recvMessageNumber:', ratchet.recvMessageNumber, 'recvChainKey exists:', !!ratchet.recvChainKey);
-    
-    // Pass innerPayload directly - primitives.decrypt expects base64 strings
+
     console.log('[Decrypt] Decrypting...');
     const plaintext = await ratchet.decrypt(innerPayload, sessionADs.get(conversationId));
     console.log('[Decrypt] SUCCESS! plaintext:', plaintext.substring(0, 50));
+
+    // Consume OPK only AFTER successful decryption so retries derive the same SK
+    if (innerPayload.x3dh?.opkKeyId) {
+      await deleteOneTimePreKey(innerPayload.x3dh.opkKeyId).catch(() => { /* non-fatal */ });
+      console.log('[Decrypt] OPK consumed after successful decrypt, opkKeyId:', innerPayload.x3dh.opkKeyId);
+    }
     
     // Persist updated state (chain key advanced, possibly DH ratchet stepped)
     await saveSessionState(conversationId, ratchet);
