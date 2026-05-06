@@ -316,7 +316,8 @@ export class DoubleRatchet {
     console.log('[Ratchet.decrypt] messageNumber:', messageNumber, 'associatedData length:', associatedData?.byteLength);
     
     // Step 3: Decrypt
-    console.log('[Ratchet.decrypt] Attempting AES-GCM decrypt - iv:', payload.iv?.substring(0, 10), 'ciphertext length:', payload.ciphertext?.byteLength);
+    const ivDisplay = typeof payload.iv === 'string' ? payload.iv?.substring(0, 10) : (payload.iv?.byteLength ? 'ArrayBuffer' : payload.iv);
+    console.log('[Ratchet.decrypt] Attempting AES-GCM decrypt - iv:', ivDisplay, 'ciphertext length:', payload.ciphertext?.byteLength);
     let plaintext;
     try {
       plaintext = await decrypt(
