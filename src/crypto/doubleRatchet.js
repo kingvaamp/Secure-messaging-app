@@ -318,9 +318,11 @@ export class DoubleRatchet {
     
     // Step 3: Decrypt
     const ivDisplay = typeof payload.iv === 'string' ? payload.iv?.substring(0, 10) : (payload.iv?.byteLength ? 'ArrayBuffer' : payload.iv);
-    console.log('[Ratchet.decrypt] Attempting AES-GCM decrypt - iv:', ivDisplay, 'ciphertext length:', payload.ciphertext?.byteLength);
+    console.log('[Ratchet.decrypt] Attempting AES-GCM decrypt - iv:', ivDisplay);
+    console.log('[Ratchet.decrypt] iv type:', typeof payload.iv, 'ciphertext type:', typeof payload.ciphertext);
     let plaintext;
     try {
+      console.log('[Ratchet.decrypt] Calling primitives.decrypt...');
       plaintext = await decrypt(
         messageKey,
         payload.iv,
@@ -329,9 +331,24 @@ export class DoubleRatchet {
       );
       console.log('[Ratchet.decrypt] SUCCESS! plaintext length:', plaintext?.byteLength);
     } catch (e) {
-      console.error('[Ratchet.decrypt] AES-GCM FAILED:', e.message);
-      console.error('[Ratchet.decrypt] This means the message key or IV is wrong');
-      throw e;
+      console.error('[Ratchet.decrypt] DECRYPT FAILED:', e.message);
+      console.error('[Ratchet.decrypt] Stack:', e.stack);
+      // Try alternative - maybe the data is already decoded
+      try {
+        console.log('[Ratchet.decrypt] Trying alternative with ArrayBuffer inputs...');
+        const ivArr = typeof payload.iv === 'string' ? fromB64(payload.iv) : payload.iv;
+        const ctArr = typeof payload.ciphertext === 'string' ? fromB64(payload.ciphertext) : payload.ciphertext;
+        plaintext = await decrypt(
+          messageKey,
+          ivArr,
+          ctArr,
+          associatedData
+        );
+        console.log('[Ratchet.decrypt] Alternative SUCCESS!');
+      } catch (e2) {
+        console.error('[Ratchet.decrypt] Alternative also FAILED:', e2.message);
+        throw e;
+      }
     }
     
     // Step 4: Check for DH ratchet update
