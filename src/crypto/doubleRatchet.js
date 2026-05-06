@@ -180,14 +180,34 @@ export class DoubleRatchet {
   /**
    * Initialize as Bob (responder)
    * Must receive Alice's initial ratchet public key
+   *
+   * CRITICAL FIX (2026-05-06): Two bugs were causing AES-GCM OperationError:
+   *
+   * 1. initialize() gives both parties the SAME bytes for send/recv chains.
+   *    Alice encrypts with sendChainKey (bytes 32-64), so Bob's recvChainKey
+   *    MUST also be bytes 32-64. We swap them here.
+   *
+   * 2. performDHRatchet() was called here, which OVERWRITES recvChainKey with
+   *    a DH-derived value. That makes it impossible to decrypt Alice's first
+   *    message. The DH ratchet is already triggered inside decrypt() when it
+   *    detects a new ratchet public key, so calling it here was premature.
    */
   async initAsBob(x3dhSecret, theirRatchetPublicKeyB64) {
     await this.initialize(x3dhSecret);
-    // Store Alice's ratchet public key
+
+    // Swap send/recv chains for Bob's perspective:
+    //   Alice.sendChainKey (bytes 32-64) → Bob.recvChainKey
+    //   Alice.recvChainKey (bytes 64-96) → Bob.sendChainKey
+    const tmp = this.sendChainKey;
+    this.sendChainKey = this.recvChainKey;
+    this.recvChainKey = tmp;
+
+    // Store Alice's ratchet public key for the DH ratchet that will
+    // be triggered inside decrypt() after message 0 is processed.
     this.recvRatchetPublicKey = await importPublicKey(theirRatchetPublicKeyB64);
-    
-    // Perform initial DH ratchet (Signal 3.4)
-    await this.performDHRatchet();
+
+    // NOTE: Do NOT call performDHRatchet() here. The initial recv chain
+    // must stay intact so we can decrypt Alice's first messages.
   }
 
   /**

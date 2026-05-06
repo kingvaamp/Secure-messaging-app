@@ -495,19 +495,18 @@ async function getOrCreateRatchet(conversationId, contactId, role = 'alice', ali
     sessionADs.set(conversationId, ad);
     console.log('[Bob] Session AD set, ad length:', ad?.byteLength);
 
-    // Import Alice's ephemeral public key for the DH ratchet init
-    const aliceEphemeralPublic = await importPublicKey(aliceHeader.ephemeralKey);
-    console.log('[Bob] Alice ephemeral key imported');
+    // Note: Alice's ephemeral public key is imported inside initAsBob
 
     const ratchet = new DoubleRatchet();
-    // Initialize as Bob with shared secret and Alice's ephemeral key
-    console.log('[Bob] Initializing ratchet with sk...');
-    await ratchet.initialize(sk);
+    // Initialize as Bob with shared secret and Alice's ratchet public key
+    // CRITICAL: Must use initAsBob (not raw initialize) so that:
+    //   1. Send/recv chain keys are swapped for Bob's perspective
+    //   2. Alice's ratchet public key is stored for future DH ratchet steps
+    console.log('[Bob] Initializing ratchet as Bob with chain swap...');
+    await ratchet.initAsBob(sk, aliceHeader.ephemeralKey);
     console.log('[Bob] Ratchet initialized, isReady:', ratchet.isReady());
     
-    // Store Alice's ratchet key for DH ratchet
-    ratchet.recvRatchetPublicKey = aliceEphemeralPublic;
-    console.log('[Bob] Stored Alice ratchet key, storing in ratchets map');
+    console.log('[Bob] Storing in ratchets map');
     ratchets.set(conversationId, ratchet);
     return ratchet;
   }
