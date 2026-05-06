@@ -210,6 +210,10 @@ export class DoubleRatchet {
     // be triggered inside decrypt() after message 0 is processed.
     this.recvRatchetPublicKey = await importPublicKey(theirRatchetPublicKeyB64);
 
+    // Signal spec §3.3: Bob must perform a DH ratchet step BEFORE his first
+    // send to derive a fresh send chain. Set this flag so encrypt() triggers it.
+    this.needsInitialDHRatchet = true;
+
     // DEBUG: fingerprint after swap
     console.log('[Ratchet.initAsBob] AFTER SWAP sendChainKey:', toB64(new Uint8Array(this.sendChainKey).slice(0, 6)));
     console.log('[Ratchet.initAsBob] AFTER SWAP recvChainKey:', toB64(new Uint8Array(this.recvChainKey).slice(0, 6)));
@@ -277,6 +281,16 @@ export class DoubleRatchet {
     }
     if (!this.sendChainKey) {
       throw new Error('No send chain key');
+    }
+
+    // Signal spec §3.3: Bob performs a DH ratchet before his FIRST send.
+    // This derives a fresh send chain so Alice can match it by DH-ratcheting
+    // on receipt of Bob's new ratchet public key.
+    if (this.needsInitialDHRatchet) {
+      console.log('[Ratchet.encrypt] Bob initial DH ratchet before first send...');
+      this.needsInitialDHRatchet = false;
+      await this.performDHRatchet();
+      console.log('[Ratchet.encrypt] Bob initial DH ratchet done, sendChainKey:', toB64(new Uint8Array(this.sendChainKey).slice(0, 6)));
     }
     
     // Step 1: Derive message key + next chain key
