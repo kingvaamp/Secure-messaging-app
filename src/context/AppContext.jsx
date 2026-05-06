@@ -720,6 +720,13 @@ export function AppProvider({ children }) {
         });
       } catch (e) {
         console.warn(`[sendGroupMessage] Fan-out failed for ${memberId}:`, e);
+        // Notify the user so they know the message didn't reach this member.
+        // SESSION_LOST means the recipient cleared their local data —
+        // they need to send a fresh message to re-establish the session.
+        const hint = e?.message?.includes('SESSION_LOST')
+          ? `\u{1F511} Session perdue avec un membre — il doit envoyer un message pour re-synchroniser`
+          : `\u26A0\uFE0F Échec de chiffrement pour un membre du groupe`;
+        dispatch({ type: ACTIONS.ADD_NOTIFICATION, payload: { type: 'error', text: hint } });
       } finally {
         releaseSendLock(lockKey);
       }
@@ -864,6 +871,11 @@ export function AppProvider({ children }) {
 
       } catch (e) {
         console.warn(`[Broadcast] Failed for ${contactId}:`, e);
+        // Notify the user so they know the broadcast didn't reach this contact.
+        const hint = e?.message?.includes('SESSION_LOST')
+          ? `\u{1F511} Session perdue avec un contact — il doit envoyer un message pour re-synchroniser`
+          : `\u26A0\uFE0F Échec d'envoi à un contact`;
+        dispatch({ type: ACTIONS.ADD_NOTIFICATION, payload: { type: 'error', text: hint } });
       } finally {
         releaseSendLock(lockKey);
       }
