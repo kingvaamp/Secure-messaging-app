@@ -294,6 +294,10 @@ export class DoubleRatchet {
    * 4. Advance chain
    */
   async decrypt(payload) {
+    console.log('[Ratchet.decrypt] START - payload.messageNumber:', payload.messageNumber, 'recvMessageNumber:', this.recvMessageNumber);
+    console.log('[Ratchet.decrypt] recvChainKey exists:', !!this.recvChainKey);
+    console.log('[Ratchet.decrypt] recvRatchetPublicKey exists:', !!this.recvRatchetPublicKey);
+    
     if (!this.initialized) {
       throw new Error('Ratchet not initialized');
     }
@@ -302,21 +306,31 @@ export class DoubleRatchet {
     }
     
     // Step 1: Derive message key from chain key
+    console.log('[Ratchet.decrypt] Deriving message key...');
     const { messageKey, nextChainKey } = await kdfMessageKey(this.recvChainKey);
+    console.log('[Ratchet.decrypt] Message key derived');
     
     // Step 2: Reconstruct Associated Data
     const messageNumber = payload.messageNumber ?? this.recvMessageNumber;
     const associatedData = encodeMessageNumber(messageNumber);
+    console.log('[Ratchet.decrypt] messageNumber:', messageNumber, 'associatedData length:', associatedData?.byteLength);
     
     // Step 3: Decrypt
-    // CRITICAL: AES-GCM auth tag throws if tampered
-    // This catches any tampering with ciphertext or message number
-    const plaintext = await decrypt(
-      messageKey,
-      payload.iv,
-      payload.ciphertext,
-      associatedData
-    );
+    console.log('[Ratchet.decrypt] Attempting AES-GCM decrypt - iv:', payload.iv?.substring(0, 10), 'ciphertext length:', payload.ciphertext?.byteLength);
+    let plaintext;
+    try {
+      plaintext = await decrypt(
+        messageKey,
+        payload.iv,
+        payload.ciphertext,
+        associatedData
+      );
+      console.log('[Ratchet.decrypt] SUCCESS! plaintext length:', plaintext?.byteLength);
+    } catch (e) {
+      console.error('[Ratchet.decrypt] AES-GCM FAILED:', e.message);
+      console.error('[Ratchet.decrypt] This means the message key or IV is wrong');
+      throw e;
+    }
     
     // Step 4: Check for DH ratchet update
     // Only happens when sender has rotated their DH key

@@ -460,16 +460,22 @@ async function getOrCreateRatchet(conversationId, contactId, role = 'alice', ali
 
   } else {
     //  Bob path: respond to Alice's first message header 
+    console.log('[Bob] Starting - aliceHeader:', JSON.stringify(aliceHeader));
     if (!aliceHeader) {
       throw new Error('X3DH: aliceHeader required for bob path');
     }
 
     // Load Bob's private SPK and (optionally) OPK from keyStorage
+    console.log('[Bob] Loading SPK for signedPreKeyId:', aliceHeader.signedPreKeyId ?? 1);
     const mySignedPreKey  = await loadSignedPreKey(aliceHeader.signedPreKeyId ?? 1);
+    console.log('[Bob] SPK loaded:', !!mySignedPreKey);
+    
     const myOneTimePreKey = aliceHeader.opkKeyId
       ? await loadOneTimePreKey(aliceHeader.opkKeyId)
       : null;
+    console.log('[Bob] OPK loaded:', !!myOneTimePreKey);
 
+    console.log('[Bob] Calling x3dhRespond with senderIdentityKey:', aliceHeader.senderIdentityKey?.substring(0, 30), 'ephemeralKey:', aliceHeader.ephemeralKey?.substring(0, 30));
     const { sk, ad } = await x3dhRespond(
       myKP,
       mySignedPreKey,
@@ -479,6 +485,7 @@ async function getOrCreateRatchet(conversationId, contactId, role = 'alice', ali
         ephemeralPublicB64: aliceHeader.ephemeralKey,
       }
     );
+    console.log('[Bob] x3dhRespond complete - sk length:', sk?.byteLength);
 
     // Consume the OPK  delete it from storage so it's never reused
     if (myOneTimePreKey && aliceHeader.opkKeyId) {
@@ -486,15 +493,21 @@ async function getOrCreateRatchet(conversationId, contactId, role = 'alice', ali
     }
 
     sessionADs.set(conversationId, ad);
+    console.log('[Bob] Session AD set, ad length:', ad?.byteLength);
 
     // Import Alice's ephemeral public key for the DH ratchet init
     const aliceEphemeralPublic = await importPublicKey(aliceHeader.ephemeralKey);
+    console.log('[Bob] Alice ephemeral key imported');
 
     const ratchet = new DoubleRatchet();
     // Initialize as Bob with shared secret and Alice's ephemeral key
+    console.log('[Bob] Initializing ratchet with sk...');
     await ratchet.initialize(sk);
+    console.log('[Bob] Ratchet initialized, isReady:', ratchet.isReady());
+    
     // Store Alice's ratchet key for DH ratchet
     ratchet.recvRatchetPublicKey = aliceEphemeralPublic;
+    console.log('[Bob] Stored Alice ratchet key, storing in ratchets map');
     ratchets.set(conversationId, ratchet);
     return ratchet;
   }
