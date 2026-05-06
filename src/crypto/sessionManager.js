@@ -71,6 +71,7 @@ import {
   deleteOneTimePreKey,
   saveRatchetSession,
   loadRatchetSession,
+  deleteRatchetSession,
   hasRatchetSession,
 } from './keyStorage';
 import { supabase } from '@/lib/supabase';
@@ -637,18 +638,23 @@ export async function decryptPayload(conversationId, contactId, payload) {
     console.log('[Decrypt] innerPayload.x3dh:', innerPayload.x3dh ? 'EXISTS' : 'NULL');
     console.log('[Decrypt] innerPayload keys:', Object.keys(innerPayload));
 
-    // If this is the first message from Alice, establish Bob's session first
-    if (innerPayload.x3dh && !ratchets.has(conversationId)) {
-      console.log('[Decrypt] First message - creating Bob session with X3DH');
+    // If this message carries an X3DH header, the sender is establishing a NEW
+    // session. We MUST create a fresh Bob ratchet — any existing session for this
+    // conversation is stale (different keys, different chain state).
+    if (innerPayload.x3dh) {
+      console.log('[Decrypt] X3DH header present — clearing stale session and creating fresh Bob session');
+      // Purge the stale ratchet from memory and disk
+      ratchets.delete(conversationId);
+      sessionADs.delete(conversationId);
+      try { await deleteRatchetSession(conversationId); } catch { /* non-fatal */ }
       await getOrCreateRatchet(conversationId, contactId, 'bob', innerPayload.x3dh);
     }
 
     console.log('[Decrypt] Getting ratchet...');
     const ratchet = await getOrCreateRatchet(conversationId, contactId, 'bob', innerPayload.x3dh ?? null);
-    console.log('[Decrypt] Got ratchet, passing payload directly to decrypt (base64 strings)...');
+    console.log('[Decrypt] Got ratchet, recvMessageNumber:', ratchet.recvMessageNumber, 'recvChainKey exists:', !!ratchet.recvChainKey);
     
-    // Pass innerPayload directly - ratchet.decrypt will handle it
-    // primitives.decrypt expects base64 strings and converts internally
+    // Pass innerPayload directly - primitives.decrypt expects base64 strings
     console.log('[Decrypt] Decrypting...');
     const plaintext = await ratchet.decrypt(innerPayload, sessionADs.get(conversationId));
     console.log('[Decrypt] SUCCESS! plaintext:', plaintext.substring(0, 50));
