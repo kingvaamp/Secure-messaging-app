@@ -676,9 +676,13 @@ export async function decryptPayload(conversationId, contactId, payload) {
     }
 
     console.log('[Decrypt] Getting ratchet...');
-    // Pass null so getOrCreateRatchet just returns the already-cached ratchet
-    // without triggering a second Bob init (which would re-run X3DH without OPK).
-    const ratchet = await getOrCreateRatchet(conversationId, contactId, 'bob', null);
+    // Role is determined by who we are in this conversation:
+    //   - X3DH header was present → we are Bob (responder), session just created above
+    //   - No X3DH header → we are Alice (initiator) receiving Bob's reply, use our own session
+    // NEVER hardcode 'bob' here — that causes "aliceHeader required" crashes when Alice
+    // receives messages that don't carry X3DH headers (all of Bob's outgoing messages).
+    const decryptRole = innerPayload.x3dh ? 'bob' : 'alice';
+    const ratchet = await getOrCreateRatchet(conversationId, contactId, decryptRole, null);
     console.log('[Decrypt] Got ratchet, recvMessageNumber:', ratchet.recvMessageNumber, 'recvChainKey exists:', !!ratchet.recvChainKey);
 
     console.log('[Decrypt] Decrypting...');
