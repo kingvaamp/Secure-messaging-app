@@ -591,6 +591,13 @@ function ChatDetail({ conv, onBack }) {
   };
 
   const handleDecrypt = async (msg) => {
+    console.log('🔓 handleDecrypt called:', {
+      id: msg.id,
+      senderId: msg.senderId,
+      hasPayload: !!msg.payload,
+      payload: msg.payload
+    });
+
     if (msg.locked === false) return;
 
     let plaintext = '';
@@ -635,7 +642,7 @@ function ChatDetail({ conv, onBack }) {
         return;
       }
     } else {
-      plaintext = 'Message déchiffré avec succès.';
+      console.warn('🔓 handleDecrypt: ELSE case - Message has no encrypted payload or invalid structure:', msg);
     }
 
     // ── Encrypted Blob Download ───────────────────────────────────────
