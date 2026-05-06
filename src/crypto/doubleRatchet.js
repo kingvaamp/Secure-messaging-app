@@ -306,7 +306,8 @@ export class DoubleRatchet {
     }
     
     // Step 1: Derive message key from chain key
-    console.log('[Ratchet.decrypt] Deriving message key...');
+    console.log('[Ratchet.decrypt] Deriving message key from recvChainKey...');
+    console.log('[Ratchet.decrypt] NOTE: We need message', messageNumber, 'but we are at recvMessageNumber', this.recvMessageNumber);
     const { messageKey, nextChainKey } = await kdfMessageKey(this.recvChainKey);
     console.log('[Ratchet.decrypt] Message key derived');
     
