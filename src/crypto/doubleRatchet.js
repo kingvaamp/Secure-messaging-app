@@ -350,18 +350,27 @@ export class DoubleRatchet {
     }
     
     // Step 1: DH ratchet step (Signal spec — MUST happen before key derivation)
-    // If the sender's ratchet public key has CHANGED (not first time), derive new
-    // recv chain keys BEFORE attempting to decrypt.
+    //
+    // IMPORTANT (Bug 12 fix, 2026-05-06):
+    // After Bug 10, Bob's one-shot DH in initAsBob derives his sendChainKey from
+    // ECDH(Bob.newKey, Alice.eph).  Alice's initial recvChainKey (HKDF bytes[64:96])
+    // does NOT match Bob's sendChainKey.  Alice MUST DH-ratchet on the FIRST receipt
+    // of Bob's ratchet key using ECDH(Alice.eph_priv=sendRatchetKeyPair, Bob.newKey)
+    // to arrive at the same chain Bob used to encrypt.  The previous "just store, no
+    // DH ratchet" guard (Bug 6) was correct when Bob sent on the raw X3DH chain,
+    // but is wrong now that Bob always one-shot DH ratchets inside initAsBob.
     if (payload.ratchetPublicKey) {
       const newKey = await importPublicKey(payload.ratchetPublicKey);
-      
+
       if (!this.recvRatchetPublicKey) {
-        // First time seeing ANY ratchet key — just store it.
-        // The initial recv chain from initialize() already matches the sender's
-        // send chain (via the swap in initAsBob or symmetric derivation).
-        // A DH ratchet here would DESTROY the correct initial chain key.
-        console.log('[Ratchet.decrypt] First ratchet key received — storing (no DH ratchet)');
+        // First time seeing ANY ratchet key from the remote party.
+        // We MUST DH-ratchet here: ECDH(our.sendRatchetKey, their.newKey) produces
+        // the same DH output the sender used in their one-shot initAsBob DH step.
+        console.log('[Ratchet.decrypt] First ratchet key received — performing DH ratchet (Bug12 fix)');
         this.recvRatchetPublicKey = newKey;
+        await this.performDHRatchet();
+        // performDHRatchet resets both counters to 0, which is correct for the
+        // very first DH ratchet step (recv starts fresh on the new chain).
       } else {
         const keySame = constantTimeEqual(
           await crypto.subtle.exportKey('raw', this.recvRatchetPublicKey),

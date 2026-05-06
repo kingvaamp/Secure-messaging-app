@@ -637,8 +637,12 @@ function ChatDetail({ conv, onBack }) {
         } catch {
           plaintext = decryptedStr;
         }
-      } catch {
-        addNotification({ type: 'error', text: '⚠️ Authentification échouée' });
+      } catch (e) {
+        if (e?.message?.includes('SESSION_LOST')) {
+          addNotification({ type: 'error', text: '🔑 Session expirée — demandez à l\'expéditeur d\'envoyer un nouveau message' });
+        } else {
+          addNotification({ type: 'error', text: '⚠️ Authentification échouée' });
+        }
         return;
       }
     } else {

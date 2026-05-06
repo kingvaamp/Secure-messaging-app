@@ -682,6 +682,19 @@ export async function decryptPayload(conversationId, contactId, payload) {
     // NEVER hardcode 'bob' here — that causes "aliceHeader required" crashes when Alice
     // receives messages that don't carry X3DH headers (all of Bob's outgoing messages).
     const decryptRole = innerPayload.x3dh ? 'bob' : 'alice';
+
+    // Guard: if we are Alice and have NO session at all (memory or IndexedDB), a fresh
+    // X3DH session (new OPK, new SK) would derive completely wrong keys and the AES-GCM
+    // decrypt would fail with an opaque OperationError. Detect this upfront via a cheap
+    // localStorage existence check and throw a clear SESSION_LOST error instead.
+    if (decryptRole === 'alice' && !ratchets.has(conversationId)) {
+      const hasStoredSession = !!(await loadRatchetSession(conversationId).catch(() => null));
+      if (!hasStoredSession) {
+        console.warn('[Decrypt] SESSION_LOST — no Alice session for conversationId:', conversationId);
+        throw new Error('SESSION_LOST: Session cleared. Ask the sender to send a new message to re-establish encryption.');
+      }
+    }
+
     const ratchet = await getOrCreateRatchet(conversationId, contactId, decryptRole, null);
     console.log('[Decrypt] Got ratchet, recvMessageNumber:', ratchet.recvMessageNumber, 'recvChainKey exists:', !!ratchet.recvChainKey);
 

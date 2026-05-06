@@ -215,7 +215,10 @@ async function secureStore(storageKey, data) {
  */
 async function secureLoad(storageKey) {
   const stored = localStorage.getItem(STORAGE_PREFIX + storageKey);
-  if (!stored) return null;
+  if (!stored) {
+    console.warn(`[KeyStorage] secureLoad: No data found in localStorage for ${storageKey}`);
+    return null;
+  }
 
   try {
     const payload    = JSON.parse(stored);
@@ -244,8 +247,8 @@ async function secureLoad(storageKey) {
       ct
     );
     return JSON.parse(new TextDecoder().decode(ptBuf));
-  } catch {
-    // Never log crypto errors in production — readable by extensions/error trackers
+  } catch (e) {
+    console.error(`[KeyStorage] secureLoad failed for ${storageKey}:`, e);
     return null;
   }
 }
