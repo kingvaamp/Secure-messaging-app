@@ -71,6 +71,8 @@ async function kdfRootKey(dhOutput, currentRootKey, info) {
  * This is what provides PERFECT FORWARD SECRECY
  */
 async function kdfMessageKey(chainKey) {
+  console.log('[kdfMessageKey] START - chainKey type:', typeof chainKey, 'byteLength:', chainKey?.byteLength);
+  
   // Import chain key for HMAC
   const hmacKey = await crypto.subtle.importKey(
     'raw',
@@ -79,6 +81,7 @@ async function kdfMessageKey(chainKey) {
     false, // non-extractable for security
     ['sign', 'verify']
   );
+  console.log('[kdfMessageKey] HMAC key imported');
   
   // Derive message key: HMAC(chainKey, 0x01)
   const messageKeyBuffer = await crypto.subtle.sign(
