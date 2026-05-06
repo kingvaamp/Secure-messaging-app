@@ -308,15 +308,31 @@ export class DoubleRatchet {
       throw new Error('No receive chain key');
     }
     
-    // Step 1: Derive message key from chain key
-    console.log('[Ratchet.decrypt] Deriving message key from recvChainKey...');
-    console.log('[Ratchet.decrypt] NOTE: We need message', messageNumber, 'but we are at recvMessageNumber', this.recvMessageNumber);
-    const { messageKey, nextChainKey } = await kdfMessageKey(this.recvChainKey);
-    console.log('[Ratchet.decrypt] Message key derived');
-    
-    // Step 2: Reconstruct Associated Data
+    // Step 1: Reconstruct Associated Data
     const messageNumber = payload.messageNumber ?? this.recvMessageNumber;
     const associatedData = encodeMessageNumber(messageNumber);
+    console.log('[Ratchet.decrypt] NOTE: We need message', messageNumber, 'but we are at recvMessageNumber', this.recvMessageNumber);
+    
+    // Step 2: Derive message key from chain key
+    console.log('[Ratchet.decrypt] Deriving message key from recvChainKey...');
+    
+    // If we missed messages, we need to advance the chain (Basic implementation)
+    // In a full Signal implementation, skipped keys would be stored in a dictionary.
+    // Here we just advance the chain to catch up if needed.
+    let currentChainKey = this.recvChainKey;
+    let msgKey, nxtChainKey;
+    
+    for (let i = this.recvMessageNumber; i <= messageNumber; i++) {
+      const derived = await kdfMessageKey(currentChainKey);
+      msgKey = derived.messageKey;
+      nxtChainKey = derived.nextChainKey;
+      currentChainKey = nxtChainKey;
+    }
+    
+    const messageKey = msgKey;
+    const nextChainKey = nxtChainKey;
+    
+    console.log('[Ratchet.decrypt] Message key derived');
     console.log('[Ratchet.decrypt] messageNumber:', messageNumber, 'associatedData length:', associatedData?.byteLength);
     
     // Step 3: Decrypt
