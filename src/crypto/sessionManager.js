@@ -290,7 +290,10 @@ export async function publishX3DHBundle(userId) {
     updated_at: new Date().toISOString(),
   });
   if (error) {
-    console.warn('[X3DH] Failed to publish bundle:', error.message);
+    console.error('🚨 [Vanish Security] Failed to publish X3DH bundle to Supabase:', error.message);
+    if (error.code === '42501' || error.message.includes('400') || error.code?.startsWith('PGRST')) {
+      console.error('🚨 This is likely due to missing or incorrect RLS policies on the `x3dh_bundles` table. Please run the complete `schema.sql` migration in your Supabase SQL Editor. Failure to publish bundles will cause "Message chiffré" (decryption failures) for your contacts.');
+    }
   }
 }
 
@@ -404,12 +407,18 @@ async function getOrCreateRatchet(conversationId, contactId, role = 'alice', ali
       const mySession = await supabase.auth.getUser();
       if (mySession?.data?.user?.id) {
         try {
-          await supabase.from('opk_claims').upsert({
+          const { error: claimError } = await supabase.from('opk_claims').upsert({
             claimer_id: mySession.data.user.id,
             owner_id:   contactId,
             opk_key_id: selectedOPK.keyId,
             claimed_at: new Date().toISOString(),
           });
+          if (claimError) {
+             console.error('🚨 [Vanish Security] Failed to claim OPK in Supabase:', claimError.message);
+             if (claimError.code === '42501' || claimError.message.includes('400') || claimError.code?.startsWith('PGRST')) {
+               console.error('🚨 Check RLS policies on the `opk_claims` table (run schema.sql).');
+             }
+          }
         } catch { /* non-fatal */ }
       }
     } else {

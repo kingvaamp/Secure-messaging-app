@@ -92,6 +92,10 @@ export async function encryptAndUpload(file, conversationId, userId) {
     });
 
   if (error) {
+    console.error('🚨 [Vanish Security] Blob upload failed:', error.message);
+    if (error.message.includes('400') || error.message.includes('403') || error.message.includes('PGRST')) {
+      console.error('🚨 This might be due to missing RLS policies on the `vanish-attachments` storage bucket. Ensure you have policies for INSERT/SELECT/DELETE for authenticated users.');
+    }
     throw new Error(`[blobStorage] Upload failed: ${error.message}`);
   }
 

@@ -427,7 +427,14 @@ export function AppProvider({ children }) {
           .select('id, name, members, created_by, created_at')
           .contains('members', [uid]); // only groups this user is in
 
-        if (error || !data || !mounted) return;
+        if (error) {
+          console.error('🚨 [Vanish Security] Failed to fetch groups from Supabase:', error.message);
+          if (error.code === '42501' || error.message.includes('400') || error.code?.startsWith('PGRST')) {
+            console.error('🚨 The `groups` table might be missing or lacks RLS policies. Please run the schema.sql migration.');
+          }
+          return;
+        }
+        if (!data || !mounted) return;
 
         const localGroupIds = new Set(stateRef.current.groups.map(g => g.id));
         const remoteOnly = data.filter(g => !localGroupIds.has(g.id));
@@ -775,7 +782,10 @@ export function AppProvider({ children }) {
         created_at: new Date().toISOString(),
       });
       if (error) {
-        console.warn('[Groups] Supabase persist failed — group saved locally only:', error.message);
+        console.error('🚨 [Vanish Security] Supabase persist failed — group saved locally only:', error.message);
+        if (error.code === '42501' || error.message.includes('400') || error.code?.startsWith('PGRST')) {
+          console.error('🚨 RLS Policy or schema error on `groups` table. Did you create it manually without running schema.sql? Run the schema.sql migration!');
+        }
       }
     } catch (e) {
       console.warn('[Groups] Supabase persist failed — group saved locally only:', e.message);
