@@ -340,25 +340,30 @@ export class DoubleRatchet {
     }
     
     // Step 1: DH ratchet step (Signal spec — MUST happen before key derivation)
-    // If the sender's ratchet public key has changed, we need to derive new
+    // If the sender's ratchet public key has CHANGED (not first time), derive new
     // recv chain keys BEFORE attempting to decrypt.
     if (payload.ratchetPublicKey) {
       const newKey = await importPublicKey(payload.ratchetPublicKey);
       
-      let keyChanged = !this.recvRatchetPublicKey; // first time seeing any key
-      if (!keyChanged) {
-        keyChanged = !constantTimeEqual(
+      if (!this.recvRatchetPublicKey) {
+        // First time seeing ANY ratchet key — just store it.
+        // The initial recv chain from initialize() already matches the sender's
+        // send chain (via the swap in initAsBob or symmetric derivation).
+        // A DH ratchet here would DESTROY the correct initial chain key.
+        console.log('[Ratchet.decrypt] First ratchet key received — storing (no DH ratchet)');
+        this.recvRatchetPublicKey = newKey;
+      } else {
+        const keySame = constantTimeEqual(
           await crypto.subtle.exportKey('raw', this.recvRatchetPublicKey),
           await crypto.subtle.exportKey('raw', newKey)
         );
-      }
-      
-      if (keyChanged) {
-        console.log('[Ratchet.decrypt] DH ratchet key changed — performing DH ratchet BEFORE decrypt');
-        this.recvRatchetPublicKey = newKey;
-        await this.performDHRatchet();
-      } else {
-        console.log('[Ratchet.decrypt] DH ratchet key unchanged — no DH ratchet needed');
+        if (!keySame) {
+          console.log('[Ratchet.decrypt] DH ratchet key CHANGED — performing DH ratchet BEFORE decrypt');
+          this.recvRatchetPublicKey = newKey;
+          await this.performDHRatchet();
+        } else {
+          console.log('[Ratchet.decrypt] DH ratchet key unchanged — no DH ratchet needed');
+        }
       }
     }
 
