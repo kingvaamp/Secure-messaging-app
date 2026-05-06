@@ -167,6 +167,10 @@ export class DoubleRatchet {
     
     this.previousRatchetPublicKey = null;
     this.initialized = true;
+
+    // DEBUG: fingerprint the derived chain keys
+    console.log('[Ratchet.init] sendChainKey fingerprint:', toB64(new Uint8Array(this.sendChainKey).slice(0, 6)));
+    console.log('[Ratchet.init] recvChainKey fingerprint:', toB64(new Uint8Array(this.recvChainKey).slice(0, 6)));
   }
 
   /**
@@ -205,6 +209,10 @@ export class DoubleRatchet {
     // Store Alice's ratchet public key for the DH ratchet that will
     // be triggered inside decrypt() after message 0 is processed.
     this.recvRatchetPublicKey = await importPublicKey(theirRatchetPublicKeyB64);
+
+    // DEBUG: fingerprint after swap
+    console.log('[Ratchet.initAsBob] AFTER SWAP sendChainKey:', toB64(new Uint8Array(this.sendChainKey).slice(0, 6)));
+    console.log('[Ratchet.initAsBob] AFTER SWAP recvChainKey:', toB64(new Uint8Array(this.recvChainKey).slice(0, 6)));
 
     // NOTE: Do NOT call performDHRatchet() here. The initial recv chain
     // must stay intact so we can decrypt Alice's first messages.
@@ -281,6 +289,8 @@ export class DoubleRatchet {
     const associatedData = encodeMessageNumber(messageNumber);
     
     // Step 3: Encrypt with AES-GCM + AD
+    // DEBUG: fingerprint the message key
+    console.log('[Ratchet.encrypt] msgKey fingerprint:', toB64(new Uint8Array(messageKey).slice(0, 6)), 'msgNum:', messageNumber);
     const encrypted = await encrypt(messageKey, plaintext, associatedData);
     
     // Step 4: ADVANCE CHAIN (PERFECT FORWARD SECRECY)
@@ -373,6 +383,8 @@ export class DoubleRatchet {
     
     const messageKey = msgKey;
     const nextChainKey = nxtChainKey;
+    // DEBUG: fingerprint the message key
+    console.log('[Ratchet.decrypt] msgKey fingerprint:', toB64(new Uint8Array(messageKey).slice(0, 6)), 'msgNum:', messageNumber);
     console.log('[Ratchet.decrypt] Message key derived');
     
     // Step 4: Decrypt

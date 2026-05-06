@@ -441,6 +441,10 @@ async function getOrCreateRatchet(conversationId, contactId, role = 'alice', ali
 
     const { sk, ad, ephemeralPublicB64, ephemeralKeyPair } = await x3dhInitiate(myKP, initiateBundle);
 
+    // DEBUG: fingerprint the shared secret so we can compare Alice vs Bob
+    const skFingerprint = toB64(new Uint8Array(await crypto.subtle.digest('SHA-256', sk)).slice(0, 8));
+    console.log('[Alice] X3DH SK fingerprint:', skFingerprint);
+
     // Store ephemeral key and IDs so encryptMessage() can attach it to messages
     // until we receive Bob's first ratchet step.
     pendingEphemeralKeys.set(conversationId, {
@@ -496,6 +500,10 @@ async function getOrCreateRatchet(conversationId, contactId, role = 'alice', ali
       }
     );
     console.log('[Bob] x3dhRespond complete - sk length:', sk?.byteLength);
+
+    // DEBUG: fingerprint the shared secret so we can compare Alice vs Bob
+    const skFingerprint = toB64(new Uint8Array(await crypto.subtle.digest('SHA-256', sk)).slice(0, 8));
+    console.log('[Bob] X3DH SK fingerprint:', skFingerprint);
 
     // Consume the OPK  delete it from storage so it's never reused
     if (myOneTimePreKey && aliceHeader.opkKeyId) {
