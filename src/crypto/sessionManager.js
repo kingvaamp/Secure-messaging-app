@@ -107,6 +107,15 @@ const sessionADs = new Map();
 const pendingEphemeralKeys = new Map();
 
 /**
+ * Per-conversation ephemeral key that established the current Bob session.
+ * Used to detect when a new X3DH header carries the SAME ephemeral key
+ * (Alice resending until she sees Bob's reply) vs a genuinely NEW session.
+ * If the ephemeral key matches, we reuse the existing session.
+ * conversationId  base64 ephemeralKey string
+ */
+const sessionEphemeralKeys = new Map();
+
+/**
  * Persist a ratchet session to encrypted storage.
  */
 async function saveSessionState(conversationId, ratchet) {
@@ -644,16 +653,26 @@ export async function decryptPayload(conversationId, contactId, payload) {
     console.log('[Decrypt] innerPayload.x3dh:', innerPayload.x3dh ? 'EXISTS' : 'NULL');
     console.log('[Decrypt] innerPayload keys:', Object.keys(innerPayload));
 
-    // If X3DH header present, clear stale session and build fresh Bob ratchet.
-    // CRITICAL: call getOrCreateRatchet only ONCE — it stores the ratchet in the
-    // map so the second call (below) just returns the cached instance without
-    // re-running X3DH (which would fail because OPK may be consumed).
+    // If X3DH header present, check if it's the SAME session (same ephemeralKey)
+    // or a genuinely NEW session. Alice keeps sending X3DH headers until she
+    // sees Bob's reply — re-creating the session each time would consume the OPK
+    // and derive a different SK on subsequent attempts.
     if (innerPayload.x3dh) {
-      console.log('[Decrypt] X3DH header present — clearing stale session and creating fresh Bob session');
-      ratchets.delete(conversationId);
-      sessionADs.delete(conversationId);
-      try { await deleteRatchetSession(conversationId); } catch { /* non-fatal */ }
-      await getOrCreateRatchet(conversationId, contactId, 'bob', innerPayload.x3dh);
+      const incomingEphemeralKey = innerPayload.x3dh.ephemeralKey;
+      const existingEphemeralKey = sessionEphemeralKeys.get(conversationId);
+      const isSameSession = existingEphemeralKey && existingEphemeralKey === incomingEphemeralKey;
+
+      if (isSameSession) {
+        console.log('[Decrypt] X3DH header is same session (same ephemeralKey) — reusing existing session');
+      } else {
+        console.log('[Decrypt] X3DH header is NEW session — clearing stale session and creating fresh Bob session');
+        ratchets.delete(conversationId);
+        sessionADs.delete(conversationId);
+        sessionEphemeralKeys.delete(conversationId);
+        try { await deleteRatchetSession(conversationId); } catch { /* non-fatal */ }
+        await getOrCreateRatchet(conversationId, contactId, 'bob', innerPayload.x3dh);
+        sessionEphemeralKeys.set(conversationId, incomingEphemeralKey);
+      }
     }
 
     console.log('[Decrypt] Getting ratchet...');
