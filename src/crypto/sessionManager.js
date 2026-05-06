@@ -596,34 +596,45 @@ export async function decryptPayload(conversationId, contactId, payload) {
     // payload in an anonymous ECDH envelope. We open it with our identity
     // private key to recover the original ratchet payload + x3dh header.
     if (payload?.sealedEnvelope) {
+      console.log('[SealedSender] Opening sealed envelope...');
       try {
         const myKP = await getMyIdentityKeyPair();
+        console.log('[SealedSender] Got my identity key');
         const innerJson = await openSealedMessage(
           myKP.privateKeyECDH,
           payload.sealedEnvelope.anonymousPublicB64,
           { iv: payload.sealedEnvelope.iv, ciphertext: payload.sealedEnvelope.ciphertext }
         );
+        console.log('[SealedSender] SUCCESS - inner:', innerJson.substring(0, 100));
         innerPayload = JSON.parse(innerJson);
       } catch (e) {
-        console.warn('[SealedSender] Failed to open sealed envelope, trying raw payload:', e.message);
+        console.error('[SealedSender] FAILED:', e.message);
         // Fall through with the original payload — graceful degradation
       }
     }
 
+    console.log('[Decrypt] innerPayload.x3dh:', innerPayload.x3dh ? 'EXISTS' : 'NULL');
+    console.log('[Decrypt] innerPayload keys:', Object.keys(innerPayload));
+
     // If this is the first message from Alice, establish Bob's session first
     if (innerPayload.x3dh && !ratchets.has(conversationId)) {
+      console.log('[Decrypt] First message - creating Bob session with X3DH');
       await getOrCreateRatchet(conversationId, contactId, 'bob', innerPayload.x3dh);
     }
 
+    console.log('[Decrypt] Getting ratchet...');
     const ratchet = await getOrCreateRatchet(conversationId, contactId, 'bob', innerPayload.x3dh ?? null);
+    console.log('[Decrypt] Got ratchet, decrypting...');
     const plaintext = await ratchet.decrypt(innerPayload, sessionADs.get(conversationId));
+    console.log('[Decrypt] SUCCESS! plaintext:', plaintext.substring(0, 50));
     
     // Persist updated state (chain key advanced, possibly DH ratchet stepped)
     await saveSessionState(conversationId, ratchet);
     
     return plaintext;
-  } catch {
-    throw new Error('Double Ratchet decryption failed — possible tampering or key mismatch');
+  } catch (e) {
+    console.error('[Decrypt] FULL ERROR:', e);
+    throw new Error('Double Ratchet decryption failed — possible tampering or key mismatch: ' + e.message);
   }
 }
 
