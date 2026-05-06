@@ -637,8 +637,19 @@ export async function decryptPayload(conversationId, contactId, payload) {
 
     console.log('[Decrypt] Getting ratchet...');
     const ratchet = await getOrCreateRatchet(conversationId, contactId, 'bob', innerPayload.x3dh ?? null);
-    console.log('[Decrypt] Got ratchet, decrypting...');
-    const plaintext = await ratchet.decrypt(innerPayload, sessionADs.get(conversationId));
+    console.log('[Decrypt] Got ratchet, converting base64 to typed arrays...');
+    
+    // Convert base64 strings to Uint8Arrays for ratchet.decrypt()
+    const decryptPayload = {
+      iv: typeof innerPayload.iv === 'string' ? fromB64(innerPayload.iv) : innerPayload.iv,
+      ciphertext: typeof innerPayload.ciphertext === 'string' ? fromB64(innerPayload.ciphertext) : innerPayload.ciphertext,
+      messageNumber: innerPayload.messageNumber,
+      ratchetPublicKey: innerPayload.ratchetPublicKey,
+    };
+    console.log('[Decrypt] Converted - iv is ArrayBuffer:', decryptPayload.iv?.byteLength > 0, 'ciphertext is ArrayBuffer:', decryptPayload.ciphertext?.byteLength > 0);
+    
+    console.log('[Decrypt] Decrypting...');
+    const plaintext = await ratchet.decrypt(decryptPayload, sessionADs.get(conversationId));
     console.log('[Decrypt] SUCCESS! plaintext:', plaintext.substring(0, 50));
     
     // Persist updated state (chain key advanced, possibly DH ratchet stepped)
