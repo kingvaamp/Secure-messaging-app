@@ -714,6 +714,18 @@ export async function decryptPayload(conversationId, contactId, payload) {
     return plaintext;
   } catch (e) {
     console.error('[Decrypt] FULL ERROR:', e);
+    // If decryption fails on a message carrying an X3DH header, the session is
+    // provably corrupted (e.g. sender used our old keys after we wiped our local storage).
+    // We MUST destroy this corrupted session. If we leave it in memory, we will reply
+    // using it, the other party will fail to decrypt our reply, and the conversation deadlocks.
+    // By destroying it, our next outgoing message will fetch a fresh bundle and heal the conversation.
+    if (innerPayload?.x3dh) {
+      console.warn('[Decrypt] Decryption failed for an X3DH message. Session corrupted. Destroying it to prevent deadlock.');
+      ratchets.delete(conversationId);
+      sessionADs.delete(conversationId);
+      sessionEphemeralKeys.delete(conversationId);
+      deleteRatchetSession(conversationId).catch(() => {});
+    }
     throw new Error('Double Ratchet decryption failed — possible tampering or key mismatch: ' + e.message);
   }
 }
