@@ -131,6 +131,12 @@ export class DoubleRatchet {
     
     // Track last seen DH key (triggers DH ratchet on change)
     this.previousRatchetPublicKey = null;
+
+    // Out-of-order message recovery maps (Signal Spec)
+    // Map: ratchetPublicKeyB64 -> { chainKey: ArrayBuffer, recvMessageNumber: number }
+    this.oldRecvChains = {}; 
+    // Map: `${ratchetPublicKeyB64}_${messageNumber}` -> ArrayBuffer (messageKey)
+    this.skippedMessageKeys = {};
     
     this.initialized = false;
   }
@@ -349,67 +355,107 @@ export class DoubleRatchet {
       throw new Error('No receive chain key');
     }
     
+    // Step 0: Check skipped message keys for intra-chain out-of-order delivery
+    const payloadKeyB64 = payload.ratchetPublicKey;
+    if (payloadKeyB64 && payload.messageNumber !== undefined) {
+      const skipKey = payloadKeyB64 + '_' + payload.messageNumber;
+      if (this.skippedMessageKeys[skipKey]) {
+        console.log('[Ratchet.decrypt] Using skipped message key for out-of-order message', skipKey);
+        const messageKey = this.skippedMessageKeys[skipKey];
+        delete this.skippedMessageKeys[skipKey]; // Consume it
+        
+        const associatedData = encodeMessageNumber(payload.messageNumber);
+        return decrypt(messageKey, payload.iv, payload.ciphertext, associatedData);
+      }
+    }
+
+    let isOldChain = false;
+
     // Step 1: DH ratchet step (Signal spec — MUST happen before key derivation)
-    //
-    // IMPORTANT (Bug 12 fix, 2026-05-06):
-    // After Bug 10, Bob's one-shot DH in initAsBob derives his sendChainKey from
-    // ECDH(Bob.newKey, Alice.eph).  Alice's initial recvChainKey (HKDF bytes[64:96])
-    // does NOT match Bob's sendChainKey.  Alice MUST DH-ratchet on the FIRST receipt
-    // of Bob's ratchet key using ECDH(Alice.eph_priv=sendRatchetKeyPair, Bob.newKey)
-    // to arrive at the same chain Bob used to encrypt.  The previous "just store, no
-    // DH ratchet" guard (Bug 6) was correct when Bob sent on the raw X3DH chain,
-    // but is wrong now that Bob always one-shot DH ratchets inside initAsBob.
-    if (payload.ratchetPublicKey) {
-      const newKey = await importPublicKey(payload.ratchetPublicKey);
+    if (payloadKeyB64) {
+      const newKey = await importPublicKey(payloadKeyB64);
 
       if (!this.recvRatchetPublicKey) {
         // First time seeing ANY ratchet key from the remote party.
-        // We MUST DH-ratchet here: ECDH(our.sendRatchetKey, their.newKey) produces
-        // the same DH output the sender used in their one-shot initAsBob DH step.
         console.log('[Ratchet.decrypt] First ratchet key received — performing DH ratchet (Bug12 fix)');
         this.recvRatchetPublicKey = newKey;
         await this.performDHRatchet();
-        // performDHRatchet resets both counters to 0, which is correct for the
-        // very first DH ratchet step (recv starts fresh on the new chain).
       } else {
-        const keySame = constantTimeEqual(
-          await crypto.subtle.exportKey('raw', this.recvRatchetPublicKey),
-          await crypto.subtle.exportKey('raw', newKey)
-        );
-        if (!keySame) {
-          console.log('[Ratchet.decrypt] DH ratchet key CHANGED — performing DH ratchet BEFORE decrypt');
-          this.recvRatchetPublicKey = newKey;
-          await this.performDHRatchet();
+        const currentKeyB64 = toB64(await crypto.subtle.exportKey('raw', this.recvRatchetPublicKey));
+        
+        if (payloadKeyB64 !== currentKeyB64) {
+          // Is it an OLD key? (Cross-chain out-of-order delivery)
+          if (this.oldRecvChains[payloadKeyB64]) {
+            console.log('[Ratchet.decrypt] Message uses OLD ratchet key — decrypting from saved old chain');
+            isOldChain = true;
+          } else {
+            console.log('[Ratchet.decrypt] DH ratchet key CHANGED — performing DH ratchet BEFORE decrypt');
+            
+            // Save the current chain to oldRecvChains BEFORE overwriting it,
+            // so we can still decrypt delayed messages that belong to it!
+            this.oldRecvChains[currentKeyB64] = {
+              chainKey: this.recvChainKey.slice(0), // clone the buffer
+              recvMessageNumber: this.recvMessageNumber
+            };
+            
+            // Keep only the last 5 old chains to prevent unbounded memory growth
+            const keys = Object.keys(this.oldRecvChains);
+            if (keys.length > 5) {
+              delete this.oldRecvChains[keys[0]];
+            }
+
+            this.recvRatchetPublicKey = newKey;
+            await this.performDHRatchet();
+          }
         } else {
           console.log('[Ratchet.decrypt] DH ratchet key unchanged — no DH ratchet needed');
         }
       }
     }
 
+    // Determine which chain and counter we are using
+    let currentChainKey = isOldChain ? this.oldRecvChains[payloadKeyB64].chainKey : this.recvChainKey;
+    let startingMessageNumber = isOldChain ? this.oldRecvChains[payloadKeyB64].recvMessageNumber : this.recvMessageNumber;
+
     // Step 2: Reconstruct Associated Data
-    const messageNumber = payload.messageNumber ?? this.recvMessageNumber;
+    const messageNumber = payload.messageNumber ?? startingMessageNumber;
     const associatedData = encodeMessageNumber(messageNumber);
-    console.log('[Ratchet.decrypt] messageNumber:', messageNumber, 'recvMessageNumber:', this.recvMessageNumber);
+    console.log('[Ratchet.decrypt] messageNumber:', messageNumber, 'startingMessageNumber:', startingMessageNumber);
     
+    if (messageNumber < startingMessageNumber) {
+      throw new Error(`Message number ${messageNumber} too old (expecting >= ${startingMessageNumber}). Possible replay attack or lost skipped key.`);
+    }
+
     // Step 3: Derive message key from (possibly updated) recv chain
-    console.log('[Ratchet.decrypt] Deriving message key from recvChainKey...');
+    console.log('[Ratchet.decrypt] Deriving message key from chain...');
     
-    // Advance chain to catch up if we missed messages
-    let currentChainKey = this.recvChainKey;
     let msgKey, nxtChainKey;
     
-    for (let i = this.recvMessageNumber; i <= messageNumber; i++) {
+    for (let i = startingMessageNumber; i <= messageNumber; i++) {
       const derived = await kdfMessageKey(currentChainKey);
+      
+      // If we are skipping messages to catch up to this one, save their keys!
+      if (i < messageNumber) {
+        const pkB64 = isOldChain ? payloadKeyB64 : toB64(await crypto.subtle.exportKey('raw', this.recvRatchetPublicKey));
+        this.skippedMessageKeys[pkB64 + '_' + i] = derived.messageKey;
+        console.log('[Ratchet.decrypt] Saved skipped message key for', pkB64 + '_' + i);
+      }
+      
       msgKey = derived.messageKey;
       nxtChainKey = derived.nextChainKey;
       currentChainKey = nxtChainKey;
+    }
+    
+    // Clean up skippedMessageKeys (keep max 40)
+    const skipKeys = Object.keys(this.skippedMessageKeys);
+    if (skipKeys.length > 40) {
+      delete this.skippedMessageKeys[skipKeys[0]];
     }
     
     const messageKey = msgKey;
     const nextChainKey = nxtChainKey;
     // DEBUG: fingerprint the message key
     console.log('[Ratchet.decrypt] msgKey fingerprint:', toB64(new Uint8Array(messageKey).slice(0, 6)), 'msgNum:', messageNumber);
-    console.log('[Ratchet.decrypt] Message key derived');
     
     // Step 4: Decrypt
     const plaintext = await decrypt(
@@ -421,8 +467,13 @@ export class DoubleRatchet {
     console.log('[Ratchet.decrypt] SUCCESS!');
     
     // Step 5: Advance chain (forward secrecy for received messages too)
-    this.recvChainKey = nextChainKey;
-    this.recvMessageNumber = messageNumber + 1;
+    if (isOldChain) {
+      this.oldRecvChains[payloadKeyB64].chainKey = nextChainKey;
+      this.oldRecvChains[payloadKeyB64].recvMessageNumber = messageNumber + 1;
+    } else {
+      this.recvChainKey = nextChainKey;
+      this.recvMessageNumber = messageNumber + 1;
+    }
     
     return plaintext;
   }
@@ -453,6 +504,25 @@ export class DoubleRatchet {
       recvRatchetPublicKeyB64 = toB64(raw);
     }
 
+    // Serialize skippedMessageKeys (convert ArrayBuffer to base64)
+    const serializedSkipped = {};
+    if (this.skippedMessageKeys) {
+      for (const [k, v] of Object.entries(this.skippedMessageKeys)) {
+        serializedSkipped[k] = toB64(v);
+      }
+    }
+    
+    // Serialize oldRecvChains
+    const serializedOldChains = {};
+    if (this.oldRecvChains) {
+      for (const [k, v] of Object.entries(this.oldRecvChains)) {
+        serializedOldChains[k] = {
+          chainKey: toB64(v.chainKey),
+          recvMessageNumber: v.recvMessageNumber
+        };
+      }
+    }
+
     return {
       rootKey: toB64(this.rootKey),
       sendChainKey: toB64(this.sendChainKey),
@@ -462,6 +532,8 @@ export class DoubleRatchet {
       sendRatchetPublicKey: this.sendRatchetKeyPair?.publicB64 ?? null,
       sendRatchetPrivateJwk: this.sendRatchetKeyPair?.privateJwk ?? null,
       recvRatchetPublicKey: recvRatchetPublicKeyB64,
+      skippedMessageKeys: serializedSkipped,
+      oldRecvChains: serializedOldChains,
       initialized: this.initialized
     };
   }
@@ -495,6 +567,24 @@ export class DoubleRatchet {
     // importPublicKey is already imported at the module top  no dynamic import needed
     if (state.recvRatchetPublicKey) {
       this.recvRatchetPublicKey = await importPublicKey(state.recvRatchetPublicKey);
+    }
+    
+    // Restore out-of-order maps
+    this.skippedMessageKeys = {};
+    if (state.skippedMessageKeys) {
+      for (const [k, v] of Object.entries(state.skippedMessageKeys)) {
+        this.skippedMessageKeys[k] = fromB64(v);
+      }
+    }
+    
+    this.oldRecvChains = {};
+    if (state.oldRecvChains) {
+      for (const [k, v] of Object.entries(state.oldRecvChains)) {
+        this.oldRecvChains[k] = {
+          chainKey: fromB64(v.chainKey),
+          recvMessageNumber: v.recvMessageNumber
+        };
+      }
     }
 
     return true;
