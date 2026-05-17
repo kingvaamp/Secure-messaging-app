@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { wipeAllKeys } from '@/crypto/keyStorage';
-import { clearAllSessions, publishX3DHBundle, getMyIdentityKeyPair } from '@/crypto/sessionManager';
+import { clearAllSessions, initializeUserSecurity } from '@/crypto/sessionManager';
 import { runPrekeyMaintenance } from '@/crypto/prekeyManager';
 
 const AuthContext = createContext(null);
@@ -43,13 +43,12 @@ export function AuthProvider({ children }) {
       
       setLoading(false);
 
-      // Publish X3DH bundle and run prekey maintenance when session is established
+      // Initialize security: publish full bundle only on first login/wiped storage,
+      // otherwise run safe prekey maintenance (never overwrites in-use SPK).
       if (session?.user?.id) {
-        publishX3DHBundle(session.user.id).catch(() => {});
-        try {
-          const idKP = await getMyIdentityKeyPair();
-          runPrekeyMaintenance(session.user.id, idKP);
-        } catch (err) {}
+        initializeUserSecurity(session.user.id).catch((err) =>
+          console.warn('[AuthContext] initializeUserSecurity failed:', err)
+        );
       }
     });
 

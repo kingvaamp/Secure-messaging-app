@@ -75,6 +75,7 @@ import {
   hasRatchetSession,
 } from './keyStorage';
 import { supabase } from '@/lib/supabase';
+import { runPrekeyMaintenance } from './prekeyManager';
 
 //  In-memory state (cleared on sign-out) 
 
@@ -326,6 +327,53 @@ export async function publishX3DHBundle(userId) {
 /** @deprecated Use publishX3DHBundle instead */
 export async function publishMyPublicKey(userId) {
   return publishX3DHBundle(userId);
+}
+
+/**
+ * Initialize user security state on login or page reload.
+ *
+ * This is the CORRECT entry point to call from AuthContext — NOT publishX3DHBundle directly.
+ *
+ * Signal Protocol constraint: Signed Pre-Keys (SPK) must NOT be wiped and regenerated
+ * on every page reload. If Alice fetches Bob's bundle (SPK-A), then Bob reloads and
+ * wipes/regenerates his SPK (SPK-B) before Alice's message arrives, x3dhRespond will
+ * compute a completely different DH shared secret → OperationError.
+ *
+ * This function enforces the correct lifecycle:
+ *
+ *   1. Identity key MISSING (fresh install / wiped storage):
+ *      → Full publishX3DHBundle(): generate IK + SPK + OPKs, upload to Supabase.
+ *        This is safe because no one has any of this user's keys yet.
+ *
+ *   2. Identity key EXISTS (normal page reload / app switch):
+ *      → runPrekeyMaintenance(): only rotates SPK if >7 days old (with grace period),
+ *        only replenishes OPKs if below threshold. SPK is never wiped.
+ *        The existing SPK that remote contacts may have already fetched is preserved.
+ *
+ * @param {string} userId — Supabase auth.user.id
+ */
+export async function initializeUserSecurity(userId) {
+  try {
+    const existingKey = await loadIdentityKey();
+    const hasIdentity = !!(existingKey?.privateJwk && existingKey?.publicB64);
+
+    if (!hasIdentity) {
+      // Fresh install or wiped storage — full key establishment.
+      // Safe to wipe because no contact can have fetched our keys yet.
+      console.log('[initializeUserSecurity] No identity key found — publishing full X3DH bundle.');
+      await publishX3DHBundle(userId);
+    } else {
+      // Normal reload — run safe maintenance only.
+      // DO NOT call publishX3DHBundle here: it would regenerate and overwrite SPK,
+      // breaking in-flight messages from contacts who fetched the old bundle.
+      console.log('[initializeUserSecurity] Identity key found — running prekey maintenance only.');
+      const idKP = await getMyIdentityKeyPair();
+      await runPrekeyMaintenance(userId, idKP);
+    }
+  } catch (err) {
+    // Non-fatal — log but never crash the app on security init
+    console.error('[initializeUserSecurity] Failed:', err);
+  }
 }
 
 //  Ratchet Session Management 
