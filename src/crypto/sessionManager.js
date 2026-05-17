@@ -533,6 +533,11 @@ async function getOrCreateRatchet(conversationId, contactId, role = 'alice', ali
     
     console.log('[Bob] Storing in ratchets map');
     ratchets.set(conversationId, ratchet);
+
+    // Persist Bob's session immediately — prevents state loss (recvMessageNumber,
+    // skippedMessageKeys) on page reload or Realtime reconnect.
+    await saveSessionState(conversationId, ratchet);
+
     return ratchet;
   }
 }
