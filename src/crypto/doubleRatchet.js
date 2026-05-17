@@ -13,7 +13,6 @@
 // ============================================
 
 import { hkdf, hmac, encrypt, decrypt, toB64, fromB64, generateKeyPair, importPublicKey, importPrivateKey, ecdh, constantTimeEqual } from './primitives';
-// Note: hkdf is intentionally used directly in initAsBob for independent send chain derivation
 
 // ============================================
 // Signal Spec Constants
@@ -192,23 +191,22 @@ export class DoubleRatchet {
    * Initialize as Bob (responder)
    * Must receive Alice's initial ratchet public key
    *
-   * CRITICAL FIX (2026-05-06): Two bugs were causing AES-GCM OperationError:
+   * CRITICAL FIX (2026-05-17): initAsBob sendChainKey derivation corrected.
    *
    * 1. initialize() gives both parties the SAME bytes for send/recv chains.
    *    Alice encrypts with sendChainKey (bytes 32-64), so Bob's recvChainKey
    *    MUST also be bytes 32-64. We swap them here.
    *
-   * 2. performDHRatchet() was called here, which OVERWRITES recvChainKey with
-   *    a DH-derived value. That makes it impossible to decrypt Alice's first
-   *    message. The DH ratchet is already triggered inside decrypt() when it
-   *    detects a new ratchet public key, so calling it here was premature.
+   * 2. Bob derives his initial sendChainKey using kdfRootKey — the exact same
+   *    function Alice's performDHRatchet Step 1 uses. This guarantees symmetry:
+   *    Bob.sendChainKey == Alice.recvChainKey (after her first DH ratchet step).
    */
   async initAsBob(x3dhSecret, theirRatchetPublicKeyB64) {
     await this.initialize(x3dhSecret);
 
     // Swap send/recv chains for Bob's perspective:
     //   Alice.sendChainKey (bytes 32-64) → Bob.recvChainKey
-    //   Alice.recvChainKey (bytes 64-96) → Bob.sendChainKey (temporary placeholder)
+    //   Alice.recvChainKey (bytes 64-96) → Bob.sendChainKey (placeholder, replaced below)
     const tmp = this.sendChainKey;
     this.sendChainKey = this.recvChainKey;
     this.recvChainKey = tmp;
@@ -216,28 +214,34 @@ export class DoubleRatchet {
     // Store Alice's ratchet public key so decrypt() can detect key changes
     this.recvRatchetPublicKey = await importPublicKey(theirRatchetPublicKeyB64);
 
-    // Signal spec §3.3: Bob derives his initial send chain via a one-shot DH.
-    // ECDH(Bob.newKey, Alice.ephemeralKey) → derive a fresh sendChainKey.
+    // Signal spec §3.3 — Bob's initial send chain.
     //
-    // CRITICAL FIX: We must NOT use kdfRootKey() here because that function
-    // takes `this.rootKey` as the HKDF salt and OVERWRITES it with a new value.
-    // If rootKey is mutated here, every subsequent performDHRatchet() call will
-    // diverge from Alice's rootKey chain, producing permanently different keys.
+    // When Alice receives Bob's first reply, decrypt() calls performDHRatchet().
+    // performDHRatchet Step 1 computes:
+    //   recvChainKey = kdfRootKey( DH(Alice.EK_priv, Bob.newKey_pub), rootKey, DH_RATCHET_INFO )[32:64]
     //
-    // Instead: use a simple independent HKDF(dhOut, zeroes, 'Bob.InitSendChain')
-    // that derives Bob's sendChainKey without touching the shared rootKey at all.
-    // This keeps rootKey symmetric between Alice and Bob for future DH ratchets.
+    // Bob MUST derive his sendChainKey the same way:
+    //   sendChainKey = kdfRootKey( DH(Bob.newKey_priv, Alice.EK_pub), rootKey, DH_RATCHET_INFO )[32:64]
+    //
+    // ECDH symmetry: DH(Bob.newKey_priv, Alice.EK_pub) == DH(Alice.EK_priv, Bob.newKey_pub) ✓
+    // rootKey:       Both sides share the same rootKey from initialize(SK)                  ✓
+    // Therefore:     Bob.sendChainKey === Alice.recvChainKey (after her DH ratchet step)   ✓
+    //
+    // Previous fix used hkdf(dhOut, zeroes, 'VanishText.Bob.InitSendChain') — completely
+    // different HKDF salt + info → different key → permanent OperationError.
     this.sendRatchetKeyPair = await generateKeyPair();
-    const dhOut = await ecdh(this.sendRatchetKeyPair.privateKey, this.recvRatchetPublicKey);
-    // Derive ONLY the sendChainKey — rootKey is intentionally NOT updated here.
-    const sendChainBytes = await hkdf(dhOut, new Uint8Array(32), 'VanishText.Bob.InitSendChain', 32);
-    this.sendChainKey = sendChainBytes;
+    const dhOut    = await ecdh(this.sendRatchetKeyPair.privateKey, this.recvRatchetPublicKey);
+    const derived  = await kdfRootKey(dhOut, this.rootKey, DH_RATCHET_INFO);
+    const dBytes   = new Uint8Array(derived);
+    this.rootKey      = dBytes.slice(0, 32).buffer; // Stay in sync with Alice's performDHRatchet
+    this.sendChainKey = dBytes.slice(32, 64).buffer;
     this.sendMessageNumber = 0;
-    // recvChainKey, recvMessageNumber, and rootKey intentionally NOT changed here.
+    // recvChainKey and recvMessageNumber intentionally NOT changed here.
 
-    // DEBUG: fingerprint after swap + DH
-    console.log('[Ratchet.initAsBob] AFTER SWAP sendChainKey:', toB64(new Uint8Array(this.sendChainKey).slice(0, 6)));
-    console.log('[Ratchet.initAsBob] AFTER SWAP recvChainKey:', toB64(new Uint8Array(this.recvChainKey).slice(0, 6)));
+    // DEBUG fingerprints
+    console.log('[Ratchet.initAsBob] sendChainKey:', toB64(new Uint8Array(this.sendChainKey).slice(0, 6)));
+    console.log('[Ratchet.initAsBob] recvChainKey:', toB64(new Uint8Array(this.recvChainKey).slice(0, 6)));
+    console.log('[Ratchet.initAsBob] rootKey:',      toB64(new Uint8Array(this.rootKey).slice(0, 6)));
   }
 
   /**
