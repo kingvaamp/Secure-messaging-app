@@ -286,6 +286,22 @@ async function fetchContactPublicKeyDemo(contactId) {
 export async function publishX3DHBundle(userId) {
   const identityKeyPair = await getMyIdentityKeyPair();
 
+  // CONSISTENCY GUARD: Wipe any orphaned SPK/OPK entries from a previous identity
+  // key session before saving new ones. This prevents the fatal mismatch where
+  // identity_key was regenerated (localStorage cleared) but old SPK/OPK survived,
+  // causing x3dhRespond to compute DH2 with a new IK_priv but Alice used old IK_pub.
+  const keysToRemove = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (k && (k.startsWith('vanish_spk_') || k.startsWith('vanish_opk_'))) {
+      keysToRemove.push(k);
+    }
+  }
+  keysToRemove.forEach(k => localStorage.removeItem(k));
+  if (keysToRemove.length > 0) {
+    console.log(`[publishX3DHBundle] Wiped ${keysToRemove.length} stale SPK/OPK entries before publishing fresh bundle.`);
+  }
+
   // Generate SPK + 20 OPKs
   const { publicBundle, privateKeys } = await generateX3DHBundle(identityKeyPair, 1, 20);
 
@@ -453,6 +469,7 @@ async function getOrCreateRatchet(conversationId, contactId, role = 'alice', ali
     // DEBUG: fingerprint the shared secret so we can compare Alice vs Bob
     const skFingerprint = toB64(new Uint8Array(await crypto.subtle.digest('SHA-256', sk)).slice(0, 8));
     console.log('[Alice] X3DH SK fingerprint:', skFingerprint);
+    console.log('[Alice] ⚡ Compare this to [Bob] X3DH SK fingerprint — they MUST match for decryption to succeed!');
 
     // Store ephemeral key and IDs so encryptMessage() can attach it to messages
     // until we receive Bob's first ratchet step.

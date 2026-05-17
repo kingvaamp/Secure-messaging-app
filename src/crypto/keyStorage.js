@@ -497,8 +497,11 @@ export async function loadOneTimePreKey(keyId) {
 
   const result = { keyId: stored.keyId, privateKey, privateJwk: stored.privateJwk };
   
-  // Consume-once logic: delete immediately after successful read
-  await deleteOneTimePreKey(keyId).catch(() => {});
+  // NOTE: OPK is intentionally NOT deleted here.
+  // Per Signal Protocol spec and AI Rule #10: deleteOneTimePreKey() is called
+  // exclusively in decryptPayload() AFTER successful AES-GCM decryption.
+  // Deleting here (on read) means any decrypt retry derives a completely
+  // different shared secret (SK without DH4), permanently breaking the session.
   
   return result;
 }
